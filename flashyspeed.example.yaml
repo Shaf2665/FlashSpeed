@@ -1,0 +1,17 @@
+server:
+  port: 8080
+  data_dir: /var/lib/flashyspeed
+
+tls:
+  mode: self-signed
+  domain: ""
+  email: ""
+  cert_file: ""
+  key_file: ""
+
+storage:
+  auto_detect_drives: true
+  manual_paths: []
+
+admin:
+  create_default_admin: true

@@ -1,0 +1,11 @@
+flashyspeed
+web/dist
+web/node_modules
+*.db
+*.db-shm
+*.db-wal
+*.pem
+*.key
+.superpowers/
+graphify-out/
+.graphify_python
