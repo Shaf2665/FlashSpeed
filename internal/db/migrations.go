@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS shares (
 CREATE TABLE IF NOT EXISTS tus_uploads (
   id            TEXT    PRIMARY KEY,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  drive_id      INTEGER NOT NULL REFERENCES drives(id),
+  drive_id      INTEGER NOT NULL REFERENCES drives(id) ON DELETE CASCADE,
   dest_path     TEXT    NOT NULL,
   upload_length INTEGER NOT NULL,
   upload_offset INTEGER NOT NULL DEFAULT 0,
