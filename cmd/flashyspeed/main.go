@@ -1,11 +1,153 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/flashyspeed/flashyspeed/internal/auth"
+	"github.com/flashyspeed/flashyspeed/internal/config"
+	"github.com/flashyspeed/flashyspeed/internal/db"
+	"github.com/flashyspeed/flashyspeed/internal/drives"
+	"github.com/flashyspeed/flashyspeed/internal/files"
+	"github.com/flashyspeed/flashyspeed/internal/tlsmgr"
+	"github.com/flashyspeed/flashyspeed/internal/tus"
 )
 
 func main() {
-	fmt.Fprintln(os.Stdout, "FlashySpeed starting...")
-	os.Exit(0)
+	cfgPath := ""
+	if len(os.Args) > 1 {
+		cfgPath = os.Args[1]
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+
+	if err := os.MkdirAll(cfg.Server.DataDir, 0755); err != nil {
+		log.Fatalf("create data dir: %v", err)
+	}
+
+	database, err := db.Open(cfg.Server.DataDir + "/flashyspeed.db")
+	if err != nil {
+		log.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	jwtSecret := []byte(os.Getenv("FS_JWT_SECRET"))
+	if len(jwtSecret) < 32 {
+		log.Fatal("FS_JWT_SECRET env var must be at least 32 bytes")
+	}
+
+	// seed default admin on first run
+	if cfg.Admin.CreateDefaultAdmin {
+		seedAdmin(database)
+	}
+
+	// drives
+	scanner := drives.NewScanner(database)
+	for _, p := range cfg.Storage.ManualPaths {
+		scanner.AddManual(p)
+	}
+	if cfg.Storage.AutoDetectDrives {
+		scanner.Sync(drives.ScanSystem())
+	} else {
+		scanner.Sync(nil)
+	}
+
+	// handlers
+	authHandler := auth.NewHandler(database, jwtSecret)
+	driveHandler := drives.NewHandler(database, scanner)
+	fileSvc := files.NewService(database)
+	fileHandler := files.NewHandler(database, fileSvc)
+	tusHandler := tus.NewHandler(database, cfg.Server.DataDir+"/tus-tmp")
+
+	authMW := auth.Middleware(jwtSecret)
+
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	r.Post("/api/auth/login", authHandler.Login)
+	r.Post("/api/auth/logout", authHandler.Logout)
+
+	r.Group(func(r chi.Router) {
+		r.Use(authMW)
+
+		r.Get("/api/auth/me", authHandler.Me)
+
+		r.Get("/api/files", fileHandler.List)
+		r.Post("/api/files/mkdir", fileHandler.Mkdir)
+		r.Delete("/api/files/{id}", fileHandler.Delete)
+		r.Patch("/api/files/{id}", fileHandler.Rename)
+		r.Get("/api/files/{id}/download", fileHandler.Download)
+
+		r.Post("/api/tus/", tusHandler.Create)
+		r.Head("/api/tus/{id}", tusHandler.Head)
+		r.Patch("/api/tus/{id}", tusHandler.Upload)
+
+		r.Get("/api/drives", driveHandler.List)
+		r.Post("/api/drives/scan", driveHandler.TriggerScan)
+	})
+
+	// serve embedded Svelte SPA (wired in Task 13)
+	r.Get("/*", serveFrontend())
+
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	srv := &http.Server{Addr: addr, Handler: r}
+
+	tlsCfg, err := tlsmgr.SelfSigned(cfg.Server.DataDir + "/tls")
+	if err != nil {
+		log.Fatalf("TLS setup: %v", err)
+	}
+	srv.TLSConfig = tlsCfg
+
+	go func() {
+		log.Printf("FlashySpeed listening on https://localhost%s", addr)
+		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("serve: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
+	log.Println("FlashySpeed stopped.")
+}
+
+func seedAdmin(database *db.DB) {
+	var count int
+	database.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&count)
+	if count > 0 {
+		return
+	}
+	hash, _ := auth.HashPassword("admin")
+	database.Exec(
+		`INSERT INTO users(username,email,password_hash,role) VALUES('admin','admin@localhost',?,'admin')`,
+		hash,
+	)
+	log.Println("Created default admin user: admin / admin — change the password immediately!")
+}
+
+// serveFrontend is a placeholder until Task 13 wires in the embedded Svelte SPA.
+func serveFrontend() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<h1>FlashySpeed</h1><p>Frontend not built yet. Run <code>make build</code>.</p>"))
+	}
 }
