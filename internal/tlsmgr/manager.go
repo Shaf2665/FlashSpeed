@@ -21,7 +21,7 @@ func SelfSigned(certDir string) (*tls.Config, error) {
 	certPath := filepath.Join(certDir, "server.crt")
 	keyPath := filepath.Join(certDir, "server.key")
 
-	// reuse if exists and not expired
+	// reuse if cert and key files are present and parseable
 	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
 		return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
 	}
@@ -52,7 +52,10 @@ func SelfSigned(certDir string) (*tls.Config, error) {
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyDER, _ := x509.MarshalECPrivateKey(priv)
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
