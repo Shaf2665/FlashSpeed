@@ -97,7 +97,7 @@ func (s *Service) List(ownerID int64) ([]Share, error) {
 		SELECT id, file_id, owner_id, target_user_id, expires_at, download_count, max_downloads, created_at
 		FROM shares
 		WHERE owner_id = ?
-		  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		  AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
 	`, ownerID)
 	if err != nil {
 		return nil, err
