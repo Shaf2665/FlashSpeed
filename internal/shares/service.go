@@ -3,7 +3,6 @@ package shares
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +14,8 @@ import (
 var (
 	ErrWrongPassword = errors.New("wrong password")
 	ErrShareExpired  = errors.New("share expired or exhausted")
+	ErrNotAuthorized = errors.New("not authorized to access this share")
+	ErrNotOwned      = errors.New("file not found or not owned by user")
 )
 
 // Share represents a file share record.
@@ -63,7 +64,7 @@ func (s *Service) Create(ownerID int64, req CreateShareRequest) (*Share, error) 
 	var fileOwner int64
 	err := s.db.QueryRow(`SELECT user_id FROM files WHERE id=? AND deleted_at IS NULL`, req.FileID).Scan(&fileOwner)
 	if err != nil || fileOwner != ownerID {
-		return nil, fmt.Errorf("file not found or not owned by user")
+		return nil, ErrNotOwned
 	}
 
 	id := uuid.New().String()
@@ -148,14 +149,15 @@ func (s *Service) Delete(ownerID int64, shareID string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return errors.New("share not found or not owned by you")
+		return ErrNotOwned
 	}
 	return nil
 }
 
 // Resolve looks up a share by token, validates it, increments the download
 // counter and returns the share together with the associated file row.
-func (s *Service) Resolve(token string, password string) (*Share, *FileRow, error) {
+// callerID is optional; if the share has a target_user_id set, it must match.
+func (s *Service) Resolve(token string, password string, callerID *int64) (*Share, *FileRow, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, nil, err
@@ -194,13 +196,15 @@ func (s *Service) Resolve(token string, password string) (*Share, *FileRow, erro
 		sh.MaxDownloads = &v
 	}
 
-	// Check expiry.
-	if sh.ExpiresAt != nil && sh.ExpiresAt.Before(time.Now()) {
-		return nil, nil, ErrShareExpired
+	// Enforce target_user_id restriction.
+	if sh.TargetUserID != nil {
+		if callerID == nil || *callerID != *sh.TargetUserID {
+			return nil, nil, ErrNotAuthorized
+		}
 	}
 
-	// Check max_downloads exhausted.
-	if sh.MaxDownloads != nil && sh.DownloadCount >= *sh.MaxDownloads {
+	// Check expiry.
+	if sh.ExpiresAt != nil && sh.ExpiresAt.Before(time.Now()) {
 		return nil, nil, ErrShareExpired
 	}
 
@@ -211,9 +215,18 @@ func (s *Service) Resolve(token string, password string) (*Share, *FileRow, erro
 		}
 	}
 
-	// Atomically increment download_count.
-	if _, err := tx.Exec(`UPDATE shares SET download_count = download_count + 1 WHERE id = ?`, token); err != nil {
+	// Atomically increment download_count, enforcing max_downloads in one query.
+	res, err := tx.Exec(
+		`UPDATE shares SET download_count = download_count + 1
+		 WHERE id = ? AND (max_downloads IS NULL OR download_count < max_downloads)`,
+		token,
+	)
+	if err != nil {
 		return nil, nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, nil, ErrShareExpired
 	}
 	sh.DownloadCount++
 

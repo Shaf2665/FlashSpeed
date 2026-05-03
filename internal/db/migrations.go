@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS shares (
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id);
+
 CREATE TABLE IF NOT EXISTS tus_uploads (
   id            TEXT    PRIMARY KEY,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -75,7 +75,7 @@ func main() {
 	fileSvc := files.NewService(database)
 	fileHandler := files.NewHandler(database, fileSvc)
 	tusHandler := tus.NewHandler(database, cfg.Server.DataDir+"/tus-tmp")
-	shareHandler := shares.NewHandler(database)
+	shareHandler := shares.NewHandler(database, jwtSecret)
 
 	authMW := auth.Middleware(jwtSecret)
 
