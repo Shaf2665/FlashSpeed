@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,7 +42,6 @@ type fileRecord struct {
 	name     string
 	mimeType string
 	isDir    bool
-	modTime  time.Time
 }
 
 // Stream handles GET /api/files/:id/stream
@@ -66,12 +64,12 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	// Verify file ownership: user_id must match and file must not be deleted
 	var rec fileRecord
 	var isDir int
-	var mimeType sql.NullString
+	var mimeType string
 	err = h.db.QueryRow(`
-		SELECT id, name, COALESCE(mime_type,''), is_dir, updated_at
+		SELECT id, name, COALESCE(mime_type,''), is_dir
 		FROM files
 		WHERE id=? AND user_id=? AND deleted_at IS NULL
-	`, fileID, claims.UserID).Scan(&rec.id, &rec.name, &mimeType, &isDir, &rec.modTime)
+	`, fileID, claims.UserID).Scan(&rec.id, &rec.name, &mimeType, &isDir)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, errorResponse{"file not found"})
 		return
@@ -81,7 +79,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec.isDir = isDir == 1
-	rec.mimeType = mimeType.String
+	rec.mimeType = mimeType
 
 	// Directories cannot be streamed
 	if rec.isDir {
@@ -109,6 +107,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	if mimeStr == "" {
 		// Sniff content type from first 512 bytes
 		buf := make([]byte, 512)
+		// For files < 512 bytes, ReadFull returns ErrUnexpectedEOF; n is still valid.
 		n, _ := io.ReadFull(f, buf)
 		mimeStr = http.DetectContentType(buf[:n])
 		// Seek back to beginning for ServeContent

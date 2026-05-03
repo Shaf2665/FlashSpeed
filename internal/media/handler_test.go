@@ -176,6 +176,9 @@ func TestStreamMIMEDetection(t *testing.T) {
 	if ct != "image/png" {
 		t.Errorf("expected Content-Type image/png, got %q", ct)
 	}
+	if w.Body.Len() != 512 {
+		t.Errorf("expected 512-byte body after MIME sniff seek-back, got %d", w.Body.Len())
+	}
 }
 
 // TestStreamDirectory verifies that streaming a directory returns 400.
@@ -189,6 +192,81 @@ func TestStreamDirectory(t *testing.T) {
 	r := newRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/files/"+itoa(dirID)+"/stream", nil)
+	req = req.WithContext(ctxWithClaims(req.Context(), &auth.Claims{UserID: userID}))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestStreamRangeOpenEnded requests bytes=512- on a 1024-byte file and expects 206 with 512 bytes.
+func TestStreamRangeOpenEnded(t *testing.T) {
+	database, driveID, userID, driveRoot := setup(t)
+	fileSvc := files.NewService(database)
+	h := media.NewHandler(database, fileSvc)
+
+	content := bytes.Repeat([]byte{0x01}, 1024)
+	fileID := insertFile(t, database, driveID, userID, driveRoot, "ones.bin", "application/octet-stream", false, content)
+
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/"+itoa(fileID)+"/stream", nil)
+	req.Header.Set("Range", "bytes=512-")
+	req = req.WithContext(ctxWithClaims(req.Context(), &auth.Claims{UserID: userID}))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Errorf("expected 206 Partial Content, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 512 {
+		t.Errorf("expected 512 bytes in body, got %d", w.Body.Len())
+	}
+	contentRange := w.Header().Get("Content-Range")
+	if contentRange != "bytes 512-1023/1024" {
+		t.Errorf("expected Content-Range bytes 512-1023/1024, got %q", contentRange)
+	}
+}
+
+// TestStreamRangeUnsatisfiable requests an out-of-range interval on a 1024-byte file and expects 416.
+func TestStreamRangeUnsatisfiable(t *testing.T) {
+	database, driveID, userID, driveRoot := setup(t)
+	fileSvc := files.NewService(database)
+	h := media.NewHandler(database, fileSvc)
+
+	content := bytes.Repeat([]byte{0x02}, 1024)
+	fileID := insertFile(t, database, driveID, userID, driveRoot, "twos.bin", "application/octet-stream", false, content)
+
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/"+itoa(fileID)+"/stream", nil)
+	req.Header.Set("Range", "bytes=2000-3000")
+	req = req.WithContext(ctxWithClaims(req.Context(), &auth.Claims{UserID: userID}))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Errorf("expected 416 Range Not Satisfiable, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestStreamBadID verifies that a non-numeric file ID returns 400.
+func TestStreamBadID(t *testing.T) {
+	database, driveID, userID, driveRoot := setup(t)
+	fileSvc := files.NewService(database)
+	h := media.NewHandler(database, fileSvc)
+
+	// Insert a file just to ensure the handler is wired correctly.
+	insertFile(t, database, driveID, userID, driveRoot, "file.txt", "text/plain", false, []byte("hello"))
+
+	r := newRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/abc/stream", nil)
 	req = req.WithContext(ctxWithClaims(req.Context(), &auth.Claims{UserID: userID}))
 
 	w := httptest.NewRecorder()

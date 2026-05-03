@@ -99,6 +99,7 @@ func main() {
 		r.Patch("/api/files/{id}", fileHandler.Rename)
 		r.Get("/api/files/{id}/download", fileHandler.Download)
 		r.Get("/api/files/{id}/stream", mediaHandler.Stream)
+		r.Head("/api/files/{id}/stream", mediaHandler.Stream)
 
 		r.Post("/api/tus/", tusHandler.Create)
 		r.Head("/api/tus/{id}", tusHandler.Head)
