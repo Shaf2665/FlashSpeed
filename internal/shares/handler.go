@@ -10,20 +10,17 @@ import (
 
 	"github.com/flashyspeed/flashyspeed/internal/auth"
 	"github.com/flashyspeed/flashyspeed/internal/db"
-	"github.com/flashyspeed/flashyspeed/internal/files"
 )
 
 // Handler exposes HTTP endpoints for the shares package.
 type Handler struct {
-	svc     *Service
-	fileSvc *files.Service
+	svc *Service
 }
 
-// NewHandler constructs a Handler wired to the given DB and files service.
-func NewHandler(database *db.DB, fileSvc *files.Service) *Handler {
+// NewHandler constructs a Handler wired to the given DB.
+func NewHandler(database *db.DB) *Handler {
 	return &Handler{
-		svc:     NewService(database),
-		fileSvc: fileSvc,
+		svc: NewService(database),
 	}
 }
 

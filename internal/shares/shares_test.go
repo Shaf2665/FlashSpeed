@@ -1,6 +1,8 @@
 package shares_test
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -170,13 +172,17 @@ func TestDeleteShare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	shareID := sh.ID
 
-	if err := svc.Delete(userID, sh.ID); err != nil {
+	if err := svc.Delete(userID, shareID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	_, _, err = svc.Resolve(sh.ID, "")
+	_, _, err = svc.Resolve(shareID, "")
 	if err == nil {
 		t.Fatal("expected error resolving deleted share, got nil")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expected sql.ErrNoRows, got %v", err)
 	}
 }
