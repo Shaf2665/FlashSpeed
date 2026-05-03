@@ -209,17 +209,20 @@ func (s *Service) Rename(userID, fileID int64, newName string) error {
 
 	// For directories: update descendants' rel_path
 	if isDir == 1 {
-		// Get all descendants
+		sep := string(os.PathSeparator)
+		// Escape SQLite LIKE wildcards in oldRelPath to prevent injection.
+		escapedPrefix := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(oldRelPath)
+		likePattern := escapedPrefix + sep + "%"
+
 		rows, err := tx.Query(`
 			SELECT id, rel_path FROM files
 			WHERE drive_id=? AND user_id=? AND deleted_at IS NULL
-			AND rel_path LIKE ?
-		`, driveID, userID, oldRelPath+"/%")
+			AND rel_path LIKE ? ESCAPE '\'
+		`, driveID, userID, likePattern)
 		if err != nil {
 			os.Rename(newAbs, oldAbs)
 			return err
 		}
-		defer rows.Close()
 		type update struct {
 			id      int64
 			newPath string
@@ -240,7 +243,11 @@ func (s *Service) Rename(userID, fileID int64, newName string) error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		os.Rename(newAbs, oldAbs) // undo FS rename on commit failure
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) AbsPath(fileID int64) (string, error) {
