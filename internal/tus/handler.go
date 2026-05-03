@@ -34,6 +34,10 @@ func NewHandler(database *db.DB, tempDir string) *Handler {
 // Create handles POST /api/tus/ — initiates a new upload
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r)
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	uploadLength, err := strconv.ParseInt(r.Header.Get("Upload-Length"), 10, 64)
 	if err != nil || uploadLength < 0 {
 		w.Header().Set("Tus-Resumable", tusVersion)
@@ -52,6 +56,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if filename == "" {
 		filename = "upload"
 	}
+	filename = filepath.Base(filename) // strip any path components — defense in depth
 
 	id := uuid.New().String()
 	tempPath := filepath.Join(h.tempDir, id+".tmp")
@@ -179,6 +184,11 @@ func (h *Handler) finalize(uploadID string, userID, driveID int64, tempPath, des
 	}
 
 	finalPath := filepath.Join(mountPath, destPath)
+	// Ensure path stays within drive root — prevent path traversal attacks
+	mountClean := filepath.Clean(mountPath) + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(finalPath)+string(os.PathSeparator), mountClean) {
+		return fmt.Errorf("dest_path escapes drive root")
+	}
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
 		return err
 	}

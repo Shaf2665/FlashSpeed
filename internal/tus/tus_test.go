@@ -195,3 +195,52 @@ func TestTUSOffsetMismatch(t *testing.T) {
 		t.Errorf("expected 409 conflict on offset mismatch, got %d", w2.Code)
 	}
 }
+
+func TestTUSOwnershipEnforced(t *testing.T) {
+	database, driveID, userID, h := setup(t)
+
+	// insert a second user
+	res, _ := database.Exec(`INSERT INTO users(username,email,password_hash,role) VALUES('v','v@b.com','x','user')`)
+	otherUserID, _ := res.LastInsertId()
+
+	r := chi.NewRouter()
+	r.Post("/api/tus/", h.Create)
+	r.Patch("/api/tus/{id}", h.Upload)
+	r.Head("/api/tus/{id}", h.Head)
+
+	// userID creates an upload
+	createReq := httptest.NewRequest(http.MethodPost, "/api/tus/", nil)
+	createReq.Header.Set("Upload-Length", "100")
+	createReq.Header.Set("Upload-Metadata", fmt.Sprintf("filename %s,drive_id %s",
+		encodeBase64("secret.txt"), encodeBase64(fmt.Sprintf("%d", driveID))))
+	createReq = createReq.WithContext(ctxWithClaims(createReq.Context(), &auth.Claims{UserID: userID}))
+
+	cw := httptest.NewRecorder()
+	r.ServeHTTP(cw, createReq)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d", cw.Code)
+	}
+	location := cw.Header().Get("Location")
+
+	// otherUserID tries PATCH — should get 403
+	patchReq := httptest.NewRequest(http.MethodPatch, location, bytes.NewReader([]byte("hello")))
+	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
+	patchReq.Header.Set("Upload-Offset", "0")
+	patchReq = patchReq.WithContext(ctxWithClaims(patchReq.Context(), &auth.Claims{UserID: otherUserID}))
+
+	pw := httptest.NewRecorder()
+	r.ServeHTTP(pw, patchReq)
+	if pw.Code != http.StatusForbidden {
+		t.Errorf("PATCH by other user: expected 403, got %d", pw.Code)
+	}
+
+	// otherUserID tries HEAD — should get 403
+	headReq := httptest.NewRequest(http.MethodHead, location, nil)
+	headReq = headReq.WithContext(ctxWithClaims(headReq.Context(), &auth.Claims{UserID: otherUserID}))
+
+	hw := httptest.NewRecorder()
+	r.ServeHTTP(hw, headReq)
+	if hw.Code != http.StatusForbidden {
+		t.Errorf("HEAD by other user: expected 403, got %d", hw.Code)
+	}
+}
