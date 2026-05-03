@@ -18,6 +18,7 @@ import (
 	"github.com/flashyspeed/flashyspeed/internal/db"
 	"github.com/flashyspeed/flashyspeed/internal/drives"
 	"github.com/flashyspeed/flashyspeed/internal/files"
+	"github.com/flashyspeed/flashyspeed/internal/media"
 	"github.com/flashyspeed/flashyspeed/internal/shares"
 	"github.com/flashyspeed/flashyspeed/internal/tlsmgr"
 	"github.com/flashyspeed/flashyspeed/internal/tus"
@@ -76,6 +77,7 @@ func main() {
 	fileHandler := files.NewHandler(database, fileSvc)
 	tusHandler := tus.NewHandler(database, cfg.Server.DataDir+"/tus-tmp")
 	shareHandler := shares.NewHandler(database, jwtSecret)
+	mediaHandler := media.NewHandler(database, fileSvc)
 
 	authMW := auth.Middleware(jwtSecret)
 
@@ -96,6 +98,7 @@ func main() {
 		r.Delete("/api/files/{id}", fileHandler.Delete)
 		r.Patch("/api/files/{id}", fileHandler.Rename)
 		r.Get("/api/files/{id}/download", fileHandler.Download)
+		r.Get("/api/files/{id}/stream", mediaHandler.Stream)
 
 		r.Post("/api/tus/", tusHandler.Create)
 		r.Head("/api/tus/{id}", tusHandler.Head)
