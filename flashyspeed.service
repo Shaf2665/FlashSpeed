@@ -1,0 +1,15 @@
+[Unit]
+Description=FlashySpeed file server
+After=network.target
+
+[Service]
+Type=simple
+User=flashyspeed
+ExecStart=/usr/local/bin/flashyspeed /etc/flashyspeed/config.yaml
+Restart=on-failure
+RestartSec=5
+Environment=FS_JWT_SECRET=CHANGE_ME_TO_A_RANDOM_64_CHAR_STRING
+WorkingDirectory=/var/lib/flashyspeed
+
+[Install]
+WantedBy=multi-user.target
