@@ -158,10 +158,3 @@ func seedAdmin(database *db.DB) {
 	log.Println("Created default admin user: admin / admin — change the password immediately!")
 }
 
-// serveFrontend is a placeholder until Task 13 wires in the embedded Svelte SPA.
-func serveFrontend() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<h1>FlashySpeed</h1><p>Frontend not built yet. Run <code>make build</code>.</p>"))
-	}
-}

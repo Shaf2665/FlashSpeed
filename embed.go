@@ -1,6 +1,6 @@
-package main
+package flashyspeed
 
 import "embed"
 
 //go:embed web/dist
-var webDist embed.FS
+var WebDist embed.FS
