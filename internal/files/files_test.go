@@ -1,6 +1,7 @@
 package files_test
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -94,5 +95,112 @@ func TestSoftDelete(t *testing.T) {
 	}
 	if !found {
 		t.Error("deleted item should appear in trash")
+	}
+}
+
+func TestRestore(t *testing.T) {
+	database, driveID, userID := setup(t)
+	svc := files.NewService(database)
+
+	id, _ := svc.Mkdir(userID, driveID, 0, "restore-me")
+	if err := svc.Delete(userID, id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := svc.Restore(userID, id); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	var deletedAt sql.NullString
+	if err := database.QueryRow(`SELECT deleted_at FROM files WHERE id=?`, id).Scan(&deletedAt); err != nil {
+		t.Fatalf("scan deleted_at: %v", err)
+	}
+	if deletedAt.Valid {
+		t.Error("deleted_at should be NULL after restore")
+	}
+
+	entries, _ := svc.List(userID, driveID, 0)
+	found := false
+	for _, e := range entries {
+		if e.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("restored folder should appear in listing")
+	}
+}
+
+func TestPermanentDelete(t *testing.T) {
+	database, driveID, userID := setup(t)
+	svc := files.NewService(database)
+
+	var mountPath string
+	database.QueryRow(`SELECT mount_path FROM drives WHERE id=?`, driveID).Scan(&mountPath)
+
+	id, _ := svc.Mkdir(userID, driveID, 0, "gone-forever")
+	if err := svc.Delete(userID, id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	dirPath := filepath.Join(mountPath, "gone-forever")
+	if _, err := os.Stat(dirPath); err != nil {
+		t.Fatalf("trashed folder should remain on disk: %v", err)
+	}
+
+	if err := svc.PermanentDelete(userID, id); err != nil {
+		t.Fatalf("permanentDelete: %v", err)
+	}
+
+	if _, err := os.Stat(dirPath); !os.IsNotExist(err) {
+		t.Fatalf("directory should be removed from disk, stat err=%v", err)
+	}
+
+	var cnt int
+	database.QueryRow(`SELECT COUNT(*) FROM files WHERE id=?`, id).Scan(&cnt)
+	if cnt != 0 {
+		t.Error("database row should be removed")
+	}
+}
+
+func TestEmptyTrash(t *testing.T) {
+	database, driveID, userID := setup(t)
+	svc := files.NewService(database)
+
+	var mountPath string
+	database.QueryRow(`SELECT mount_path FROM drives WHERE id=?`, driveID).Scan(&mountPath)
+
+	// Create two directories and soft-delete both.
+	id1, _ := svc.Mkdir(userID, driveID, 0, "trash-a")
+	id2, _ := svc.Mkdir(userID, driveID, 0, "trash-b")
+	svc.Delete(userID, id1)
+	svc.Delete(userID, id2)
+
+	trash, _ := svc.Trash(userID)
+	if len(trash) != 2 {
+		t.Fatalf("expected 2 items in trash before empty, got %d", len(trash))
+	}
+
+	if err := svc.EmptyTrash(userID); err != nil {
+		t.Fatalf("emptyTrash: %v", err)
+	}
+
+	trash, _ = svc.Trash(userID)
+	if len(trash) != 0 {
+		t.Errorf("expected empty trash, got %d items", len(trash))
+	}
+
+	// Verify DB rows are gone.
+	var cnt int
+	database.QueryRow(`SELECT COUNT(*) FROM files WHERE user_id=?`, userID).Scan(&cnt)
+	if cnt != 0 {
+		t.Errorf("expected 0 DB rows after empty trash, got %d", cnt)
+	}
+
+	// Verify directories are removed from disk.
+	for _, name := range []string{"trash-a", "trash-b"} {
+		p := filepath.Join(mountPath, name)
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed from disk", name)
+		}
 	}
 }

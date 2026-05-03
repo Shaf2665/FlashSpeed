@@ -136,3 +136,54 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", disposition)
 	http.ServeContent(w, r, name, modTime, f)
 }
+
+func (h *Handler) TrashList(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	entries, err := h.svc.Trash(claims.UserID)
+	if err != nil {
+		http.Error(w, `{"error":"trash list failed"}`, http.StatusInternalServerError)
+		return
+	}
+	if entries == nil {
+		entries = []Entry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	fileID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, `{"error":"bad id"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.Restore(claims.UserID, fileID); err != nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) PermanentDelete(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	fileID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, `{"error":"bad id"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.PermanentDelete(claims.UserID, fileID); err != nil {
+		http.Error(w, `{"error":"delete failed"}`, http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) EmptyTrash(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	if err := h.svc.EmptyTrash(claims.UserID); err != nil {
+		http.Error(w, `{"error":"empty trash failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

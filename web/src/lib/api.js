@@ -37,4 +37,8 @@ export const api = {
   createShare: (fileId) => request('POST', '/shares', { file_id: fileId }),
   listShares: () => request('GET', '/shares'),
   deleteShare: (id) => request('DELETE', `/shares/${id}`),
+  listTrash: () => request('GET', '/trash'),
+  restoreFile: (id) => request('POST', `/trash/${id}/restore`),
+  permanentDelete: (id) => request('DELETE', `/trash/${id}`),
+  emptyTrash: () => request('DELETE', '/trash'),
 }

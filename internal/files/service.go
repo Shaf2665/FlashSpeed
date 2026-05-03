@@ -1,6 +1,7 @@
 package files
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ type Entry struct {
 	ParentID  *int64    `json:"parent_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 type Service struct {
@@ -134,8 +136,9 @@ func (s *Service) Delete(userID, fileID int64) error {
 
 func (s *Service) Trash(userID int64) ([]Entry, error) {
 	rows, err := s.db.Query(`
-		SELECT id,name,is_dir,size_bytes,COALESCE(mime_type,''),parent_id,created_at,updated_at
+		SELECT id,name,is_dir,size_bytes,COALESCE(mime_type,''),parent_id,created_at,updated_at,deleted_at
 		FROM files WHERE user_id=? AND deleted_at IS NOT NULL
+		ORDER BY deleted_at DESC
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -147,12 +150,123 @@ func (s *Service) Trash(userID int64) ([]Entry, error) {
 		var e Entry
 		var isDir int
 		var pID *int64
-		rows.Scan(&e.ID, &e.Name, &isDir, &e.SizeBytes, &e.MimeType, &pID, &e.CreatedAt, &e.UpdatedAt)
+		var deletedAt time.Time
+		if err := rows.Scan(&e.ID, &e.Name, &isDir, &e.SizeBytes, &e.MimeType, &pID, &e.CreatedAt, &e.UpdatedAt, &deletedAt); err != nil {
+			return nil, err
+		}
 		e.IsDir = isDir == 1
 		e.ParentID = pID
+		e.DeletedAt = &deletedAt
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+func (s *Service) Restore(userID, fileID int64) error {
+	res, err := s.db.Exec(`
+		UPDATE files SET deleted_at=NULL, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND user_id=? AND deleted_at IS NOT NULL
+	`, fileID, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("file not found or not in trash")
+	}
+	return nil
+}
+
+func (s *Service) PermanentDelete(userID, fileID int64) error {
+	var relPath string
+	var isDir int
+	var driveID int64
+	var mountPath string
+
+	err := s.db.QueryRow(`
+		SELECT f.rel_path, f.is_dir, f.drive_id, d.mount_path
+		FROM files f JOIN drives d ON d.id=f.drive_id
+		WHERE f.id=? AND f.user_id=? AND f.deleted_at IS NOT NULL
+	`, fileID, userID).Scan(&relPath, &isDir, &driveID, &mountPath)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("file not found or not in trash")
+	}
+	if err != nil {
+		return fmt.Errorf("query file: %w", err)
+	}
+
+	rootAbs := filepath.Join(mountPath, relPath)
+
+	var ids []int64
+	if isDir == 1 {
+		sep := string(os.PathSeparator)
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(relPath)
+		pattern := escaped + sep + "%"
+		rows, err := s.db.Query(`
+			SELECT id FROM files
+			WHERE user_id=? AND drive_id=? AND (rel_path=? OR rel_path LIKE ? ESCAPE '\')
+		`, userID, driveID, relPath, pattern)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+	} else {
+		ids = []int64{fileID}
+	}
+
+	if err := os.RemoveAll(rootAbs); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove from disk: %w", err)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	qmarks := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]interface{}, 0, len(ids)+2)
+	args = append(args, userID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	res, err := tx.Exec(
+		fmt.Sprintf(`DELETE FROM files WHERE user_id=? AND id IN (%s)`, qmarks),
+		args...,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); int(n) != len(ids) {
+		return fmt.Errorf("delete rows mismatch")
+	}
+	return tx.Commit()
+}
+
+func (s *Service) EmptyTrash(userID int64) error {
+	for {
+		var id int64
+		err := s.db.QueryRow(
+			`SELECT id FROM files WHERE user_id=? AND deleted_at IS NOT NULL LIMIT 1`,
+			userID,
+		).Scan(&id)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.PermanentDelete(userID, id); err != nil {
+			return err
+		}
+	}
 }
 
 func (s *Service) Rename(userID, fileID int64, newName string) error {
