@@ -18,6 +18,7 @@ import (
 	"github.com/flashyspeed/flashyspeed/internal/db"
 	"github.com/flashyspeed/flashyspeed/internal/drives"
 	"github.com/flashyspeed/flashyspeed/internal/files"
+	"github.com/flashyspeed/flashyspeed/internal/shares"
 	"github.com/flashyspeed/flashyspeed/internal/tlsmgr"
 	"github.com/flashyspeed/flashyspeed/internal/tus"
 )
@@ -74,6 +75,7 @@ func main() {
 	fileSvc := files.NewService(database)
 	fileHandler := files.NewHandler(database, fileSvc)
 	tusHandler := tus.NewHandler(database, cfg.Server.DataDir+"/tus-tmp")
+	shareHandler := shares.NewHandler(database, fileSvc)
 
 	authMW := auth.Middleware(jwtSecret)
 
@@ -101,7 +103,14 @@ func main() {
 
 		r.Get("/api/drives", driveHandler.List)
 		r.Post("/api/drives/scan", driveHandler.TriggerScan)
+
+		r.Get("/api/shares", shareHandler.List)
+		r.Post("/api/shares", shareHandler.Create)
+		r.Delete("/api/shares/{id}", shareHandler.Delete)
 	})
+
+	// Public share resolve — no auth required, must be before SPA catch-all.
+	r.Get("/api/s/{token}", shareHandler.Resolve)
 
 	// serve embedded Svelte SPA (wired in Task 13)
 	r.Get("/*", serveFrontend())
