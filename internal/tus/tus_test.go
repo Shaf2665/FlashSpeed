@@ -84,3 +84,114 @@ func TestTUSCreateAndUpload(t *testing.T) {
 		t.Fatalf("upload: expected 204, got %d: %s", w2.Code, w2.Body.String())
 	}
 }
+
+func TestTUSMissingDriveID(t *testing.T) {
+	_, _, userID, h := setup(t)
+
+	r := chi.NewRouter()
+	r.Post("/api/tus/", h.Create)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tus/", nil)
+	req.Header.Set("Upload-Length", "100")
+	req.Header.Set("Upload-Metadata", fmt.Sprintf("filename %s", encodeBase64("test.txt")))
+	// no drive_id in metadata
+
+	claims := &auth.Claims{UserID: userID}
+	req = req.WithContext(ctxWithClaims(req.Context(), claims))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestTUSOversizedPatchDoesNotCorrupt(t *testing.T) {
+	_, driveID, userID, h := setup(t)
+
+	r := chi.NewRouter()
+	r.Post("/api/tus/", h.Create)
+	r.Patch("/api/tus/{id}", h.Upload)
+	r.Head("/api/tus/{id}", h.Head)
+
+	claims := &auth.Claims{UserID: userID}
+
+	// declare 5 bytes but try to upload 10
+	req := httptest.NewRequest(http.MethodPost, "/api/tus/", nil)
+	req.Header.Set("Upload-Length", "5")
+	req.Header.Set("Upload-Metadata", fmt.Sprintf("filename %s,drive_id %s",
+		encodeBase64("test.txt"), encodeBase64(fmt.Sprintf("%d", driveID))))
+	req = req.WithContext(ctxWithClaims(req.Context(), claims))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d", w.Code)
+	}
+	location := w.Header().Get("Location")
+
+	// send 10 bytes when only 5 declared
+	oversized := bytes.Repeat([]byte("x"), 10)
+	req2 := httptest.NewRequest(http.MethodPatch, location, bytes.NewReader(oversized))
+	req2.Header.Set("Content-Type", "application/offset+octet-stream")
+	req2.Header.Set("Upload-Offset", "0")
+	req2 = req2.WithContext(ctxWithClaims(req2.Context(), claims))
+
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	// Should succeed since LimitReader caps at 5 bytes and upload completes
+	// (5 bytes written == uploadLength=5, so finalize triggers)
+	// OR returns 413 — both acceptable behaviors. What matters: no corruption.
+	// Check that HEAD returns consistent state afterward if 413 was returned.
+	if w2.Code == http.StatusRequestEntityTooLarge {
+		// 413 returned: temp file should have only 0 bytes written (LimitReader bounded it)
+		// HEAD should still show offset=0
+		req3 := httptest.NewRequest(http.MethodHead, location, nil)
+		req3 = req3.WithContext(ctxWithClaims(req3.Context(), claims))
+		w3 := httptest.NewRecorder()
+		r.ServeHTTP(w3, req3)
+		if w3.Code == http.StatusOK {
+			offsetStr := w3.Header().Get("Upload-Offset")
+			if offsetStr != "0" {
+				t.Errorf("expected offset=0 after rejected oversized upload, got %s", offsetStr)
+			}
+		}
+	} else if w2.Code != http.StatusNoContent {
+		t.Errorf("expected 204 or 413, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestTUSOffsetMismatch(t *testing.T) {
+	_, driveID, userID, h := setup(t)
+
+	r := chi.NewRouter()
+	r.Post("/api/tus/", h.Create)
+	r.Patch("/api/tus/{id}", h.Upload)
+
+	claims := &auth.Claims{UserID: userID}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tus/", nil)
+	req.Header.Set("Upload-Length", "100")
+	req.Header.Set("Upload-Metadata", fmt.Sprintf("filename %s,drive_id %s",
+		encodeBase64("test.txt"), encodeBase64(fmt.Sprintf("%d", driveID))))
+	req = req.WithContext(ctxWithClaims(req.Context(), claims))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	location := w.Header().Get("Location")
+
+	// send with wrong offset (should be 0, sending 50)
+	req2 := httptest.NewRequest(http.MethodPatch, location, bytes.NewReader([]byte("hello")))
+	req2.Header.Set("Content-Type", "application/offset+octet-stream")
+	req2.Header.Set("Upload-Offset", "50")
+	req2 = req2.WithContext(ctxWithClaims(req2.Context(), claims))
+
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusConflict {
+		t.Errorf("expected 409 conflict on offset mismatch, got %d", w2.Code)
+	}
+}

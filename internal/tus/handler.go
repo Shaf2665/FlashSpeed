@@ -25,7 +25,9 @@ type Handler struct {
 }
 
 func NewHandler(database *db.DB, tempDir string) *Handler {
-	os.MkdirAll(tempDir, 0755)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		panic("tus: failed to create temp dir: " + err.Error())
+	}
 	return &Handler{db: database, tempDir: tempDir}
 }
 
@@ -34,6 +36,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r)
 	uploadLength, err := strconv.ParseInt(r.Header.Get("Upload-Length"), 10, 64)
 	if err != nil || uploadLength < 0 {
+		w.Header().Set("Tus-Resumable", tusVersion)
 		http.Error(w, "invalid Upload-Length", http.StatusBadRequest)
 		return
 	}
@@ -41,6 +44,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	meta := parseMetadata(r.Header.Get("Upload-Metadata"))
 	driveID, _ := strconv.ParseInt(meta["drive_id"], 10, 64)
 	if driveID == 0 {
+		w.Header().Set("Tus-Resumable", tusVersion)
 		http.Error(w, "drive_id required in Upload-Metadata", http.StatusBadRequest)
 		return
 	}
@@ -79,10 +83,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var offset, length int64
-	err := h.db.QueryRow(`SELECT upload_offset, upload_length FROM tus_uploads WHERE id=?`, id).
-		Scan(&offset, &length)
+	var storedUserID int64
+	err := h.db.QueryRow(`SELECT upload_offset, upload_length, user_id FROM tus_uploads WHERE id=?`, id).
+		Scan(&offset, &length, &storedUserID)
 	if err != nil {
+		w.Header().Set("Tus-Resumable", tusVersion)
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	claims := auth.ClaimsFromCtx(r)
+	if claims == nil || storedUserID != claims.UserID {
+		w.Header().Set("Tus-Resumable", tusVersion)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -107,7 +120,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		FROM tus_uploads WHERE id=?
 	`, id).Scan(&uploadOffset, &uploadLength, &tempPath, &destPath, &userID, &driveID, &metaJSON)
 	if err != nil {
+		w.Header().Set("Tus-Resumable", tusVersion)
 		http.Error(w, "upload not found", http.StatusNotFound)
+		return
+	}
+
+	claims := auth.ClaimsFromCtx(r)
+	if claims == nil || userID != claims.UserID {
+		w.Header().Set("Tus-Resumable", tusVersion)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -122,7 +143,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "open temp file failed", http.StatusInternalServerError)
 		return
 	}
-	written, err := io.Copy(f, r.Body)
+	written, err := io.Copy(f, io.LimitReader(r.Body, uploadLength-uploadOffset))
 	f.Close()
 	if err != nil {
 		http.Error(w, "write failed", http.StatusInternalServerError)
@@ -161,11 +182,8 @@ func (h *Handler) finalize(uploadID string, userID, driveID int64, tempPath, des
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, finalPath); err != nil {
-		return err
-	}
 
-	mime := detectMIME(finalPath)
+	mime := detectMIME(tempPath)
 
 	tx, err := h.db.Begin()
 	if err != nil {
@@ -173,18 +191,31 @@ func (h *Handler) finalize(uploadID string, userID, driveID int64, tempPath, des
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`
+	var fileID int64
+	res, err := tx.Exec(`
 		INSERT INTO files(user_id, drive_id, name, rel_path, size_bytes, mime_type, is_dir)
 		VALUES(?,?,?,?,?,?,0)
-	`, userID, driveID, filepath.Base(destPath), destPath, size, mime); err != nil {
+	`, userID, driveID, filepath.Base(destPath), destPath, size, mime)
+	if err != nil {
 		return err
 	}
+	fileID, _ = res.LastInsertId()
 
 	if _, err := tx.Exec(`DELETE FROM tus_uploads WHERE id=?`, uploadID); err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	// FS move happens after DB commit — if rename fails, clean up the DB row
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		h.db.Exec(`DELETE FROM files WHERE id=?`, fileID)
+		return fmt.Errorf("rename failed: %w", err)
+	}
+
+	return nil
 }
 
 func parseMetadata(header string) map[string]string {
