@@ -18,9 +18,12 @@ func serveFrontend() http.HandlerFunc {
 		// Try to open the requested path; if not found, serve index.html for SPA routing
 		_, err := dist.Open(r.URL.Path[1:]) // strip leading /
 		if err != nil {
-			// Serve index.html for all unknown paths (client-side routing)
+			// Serve index.html for all unknown paths (client-side routing).
+			// Deep-copy the URL so we don't mutate the original request.
 			r2 := *r
-			r2.URL.Path = "/"
+			u2 := *r.URL
+			u2.Path = "/"
+			r2.URL = &u2
 			fsHandler.ServeHTTP(w, &r2)
 			return
 		}
