@@ -34,4 +34,7 @@ export const api = {
   renameFile: (id, name) => request('PATCH', `/files/${id}`, { name }),
   downloadUrl: (id) => `${base}/files/${id}/download`,
   listDrives: () => request('GET', '/drives'),
+  createShare: (fileId) => request('POST', '/shares', { file_id: fileId }),
+  listShares: () => request('GET', '/shares'),
+  deleteShare: (id) => request('DELETE', `/shares/${id}`),
 }

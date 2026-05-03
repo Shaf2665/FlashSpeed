@@ -3,10 +3,12 @@
   import Login from './routes/Login.svelte'
   import Files from './routes/Files.svelte'
   import Share from './routes/Share.svelte'
+  import Trash from './routes/Trash.svelte'
 </script>
 
 <Router>
   <Route path="/login" component={Login} />
+  <Route path="/trash" component={Trash} />
   <Route path="/s/:token" let:params>
     <Share token={params.token} />
   </Route>

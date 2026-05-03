@@ -1,8 +1,8 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
+  import { navigate } from 'svelte-routing'
   import { token, currentDriveId, currentParentId, isLoggedIn } from '../lib/stores.js'
   import { api } from '../lib/api.js'
-  import { navigate } from 'svelte-routing'
 
   let drives = []
   let entries = []
@@ -10,6 +10,17 @@
   let error = ''
   let newFolderName = ''
   let showNewFolder = false
+
+  // --- Share dialog state ---
+  let shareEntry = null   // entry being shared
+  let shareUrl = ''       // generated share URL after create
+  let shareError = ''
+  let shareLoading = false
+  let shareCopied = false
+
+  // --- Media preview state ---
+  let previewEntry = null  // entry being previewed
+  let previewBlobUrl = null
 
   $: if ($currentDriveId) loadFiles()
 
@@ -22,6 +33,10 @@
       }
     } catch (e) { error = e.message }
     loading = false
+  })
+
+  onDestroy(() => {
+    revokePreviewBlob()
   })
 
   async function loadFiles() {
@@ -99,6 +114,97 @@
     if (!d) return ''
     return new Date(d).toLocaleDateString()
   }
+
+  // ---- Share dialog ----
+
+  function openShareDialog(entry) {
+    shareEntry = entry
+    shareUrl = ''
+    shareError = ''
+    shareCopied = false
+    shareLoading = false
+  }
+
+  function closeShareDialog() {
+    shareEntry = null
+    shareUrl = ''
+    shareError = ''
+    shareCopied = false
+  }
+
+  function handleShareBackdropClick(e) {
+    if (e.target === e.currentTarget) closeShareDialog()
+  }
+
+  async function createShare() {
+    if (!shareEntry) return
+    shareLoading = true
+    shareError = ''
+    try {
+      const share = await api.createShare(shareEntry.id)
+      shareUrl = `${window.location.protocol}//${window.location.host}/s/${share.id}`
+    } catch (e) {
+      shareError = e.message
+    } finally {
+      shareLoading = false
+    }
+  }
+
+  async function copyShareUrl() {
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      shareCopied = true
+      setTimeout(() => { shareCopied = false }, 2000)
+    } catch (e) {
+      shareError = 'Could not copy to clipboard'
+    }
+  }
+
+  // ---- Media preview ----
+
+  function revokePreviewBlob() {
+    if (previewBlobUrl) {
+      URL.revokeObjectURL(previewBlobUrl)
+      previewBlobUrl = null
+    }
+  }
+
+  async function openPreview(entry) {
+    revokePreviewBlob()
+    previewEntry = entry
+    const mime = entry.mime_type || ''
+    const endpoint = mime.startsWith('image/')
+      ? `/api/files/${entry.id}/download`
+      : `/api/files/${entry.id}/stream`
+    try {
+      // NOTE: for large video files this buffers the entire file into memory.
+      // A streaming approach via MediaSource/Service Worker would be needed for production use.
+      const res = await fetch(endpoint, {
+        headers: { 'Authorization': `Bearer ${$token}` }
+      })
+      if (!res.ok) throw new Error(res.statusText)
+      const blob = await res.blob()
+      previewBlobUrl = URL.createObjectURL(blob)
+    } catch (e) {
+      error = `Preview failed: ${e.message}`
+      previewEntry = null
+    }
+  }
+
+  function closePreview() {
+    revokePreviewBlob()
+    previewEntry = null
+  }
+
+  function handlePreviewBackdropClick(e) {
+    if (e.target === e.currentTarget) closePreview()
+  }
+
+  function isPreviewable(entry) {
+    if (entry.is_dir) return false
+    const mime = entry.mime_type || ''
+    return mime.startsWith('image/') || mime.startsWith('video/') || mime.startsWith('audio/')
+  }
 </script>
 
 <style>
@@ -124,6 +230,37 @@
   .new-folder { display: flex; gap: 8px; padding: 8px 20px; align-items: center; }
   .new-folder input { background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
                       padding: 5px 8px; border-radius: 4px; font-family: monospace; }
+
+  /* Modal shared styles */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .modal-card {
+    background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+    padding: 24px; min-width: 360px; max-width: 520px; width: 90%;
+    position: relative;
+  }
+  .modal-card h2 { margin: 0 0 16px; font-size: 14px; color: #38bdf8; }
+  .modal-close {
+    position: absolute; top: 12px; right: 12px;
+    background: none; border: none; color: #64748b; font-size: 18px;
+    cursor: pointer; padding: 0 4px;
+  }
+  .modal-close:hover { color: #e2e8f0; background: none; }
+
+  /* Share dialog */
+  .share-url-row { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .share-url-input {
+    flex: 1; background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
+    padding: 6px 8px; border-radius: 4px; font-family: monospace; font-size: 12px;
+  }
+  .share-error { color: #f87171; font-size: 12px; margin-top: 8px; }
+
+  /* Preview modal */
+  .preview-media { max-width: 100%; max-height: 60vh; display: block; margin: 0 auto; border-radius: 4px; }
+  .preview-filename { color: #64748b; font-size: 12px; margin-bottom: 12px; word-break: break-all; }
 </style>
 
 <nav>
@@ -133,6 +270,7 @@
       <option value={d.id}>{d.name}</option>
     {/each}
   </select>
+  <button on:click={() => navigate('/trash')}>🗑 Trash</button>
   <button on:click={logout}>Logout</button>
 </nav>
 
@@ -183,6 +321,10 @@
                 <a href={api.downloadUrl(e.id)} download={e.name}>
                   <button>⬇</button>
                 </a>
+                {#if isPreviewable(e)}
+                  <button on:click={() => openPreview(e)}>▶ Preview</button>
+                {/if}
+                <button on:click={() => openShareDialog(e)}>🔗 Share</button>
               {/if}
               <button on:click={() => deleteEntry(e.id)}>🗑</button>
             </div>
@@ -194,4 +336,61 @@
       {/if}
     </tbody>
   </table>
+{/if}
+
+<!-- ====== Share Dialog ====== -->
+{#if shareEntry}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={handleShareBackdropClick}>
+    <div class="modal-card">
+      <button class="modal-close" on:click={closeShareDialog}>✕</button>
+      <h2>🔗 Share "{shareEntry.name}"</h2>
+
+      {#if !shareUrl}
+        <p style="color:#94a3b8;font-size:13px;margin:0 0 16px">
+          Create a public link for this file. Anyone with the link can download it.
+        </p>
+        <button on:click={createShare} disabled={shareLoading}>
+          {shareLoading ? 'Creating…' : 'Create Share Link'}
+        </button>
+      {:else}
+        <p style="color:#94a3b8;font-size:12px;margin:0 0 4px">Share link created:</p>
+        <div class="share-url-row">
+          <input class="share-url-input" readonly value={shareUrl} />
+          <button on:click={copyShareUrl}>{shareCopied ? '✓ Copied' : 'Copy'}</button>
+        </div>
+      {/if}
+
+      {#if shareError}
+        <div class="share-error">{shareError}</div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- ====== Media Preview Modal ====== -->
+{#if previewEntry}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={handlePreviewBackdropClick}>
+    <div class="modal-card" style="max-width:720px">
+      <button class="modal-close" on:click={closePreview}>✕</button>
+      <h2>▶ Preview</h2>
+      <div class="preview-filename">{previewEntry.name}</div>
+
+      {#if previewBlobUrl}
+        {#if (previewEntry.mime_type || '').startsWith('image/')}
+          <img class="preview-media" src={previewBlobUrl} alt={previewEntry.name} />
+        {:else if (previewEntry.mime_type || '').startsWith('video/')}
+          <!-- svelte-ignore a11y-media-has-caption -->
+          <video class="preview-media" src={previewBlobUrl} controls></video>
+        {:else if (previewEntry.mime_type || '').startsWith('audio/')}
+          <audio src={previewBlobUrl} controls style="width:100%;margin-top:8px"></audio>
+        {/if}
+      {:else}
+        <p style="color:#64748b;text-align:center;padding:20px">Loading preview…</p>
+      {/if}
+    </div>
+  </div>
 {/if}
