@@ -3,6 +3,7 @@ package shares
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,6 +60,12 @@ func NewService(database *db.DB) *Service {
 
 // Create generates a new share token for ownerID.
 func (s *Service) Create(ownerID int64, req CreateShareRequest) (*Share, error) {
+	var fileOwner int64
+	err := s.db.QueryRow(`SELECT user_id FROM files WHERE id=? AND deleted_at IS NULL`, req.FileID).Scan(&fileOwner)
+	if err != nil || fileOwner != ownerID {
+		return nil, fmt.Errorf("file not found or not owned by user")
+	}
+
 	id := uuid.New().String()
 
 	var passwordHash *string
@@ -71,7 +78,7 @@ func (s *Service) Create(ownerID int64, req CreateShareRequest) (*Share, error) 
 	}
 
 	now := time.Now().UTC()
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO shares (id, file_id, owner_id, target_user_id, password_hash, expires_at, max_downloads, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, id, req.FileID, ownerID, req.TargetUserID, passwordHash, req.ExpiresAt, req.MaxDownloads, now)

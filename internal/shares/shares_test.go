@@ -145,6 +145,23 @@ func TestMaxDownloadsExhausted(t *testing.T) {
 	}
 }
 
+func TestCreateShareNotOwned(t *testing.T) {
+	database, _, fileID := setup(t)
+	svc := shares.NewService(database)
+
+	// Create a second user who does NOT own the file.
+	res, err := database.Exec(`INSERT INTO users(username, email, password_hash, role) VALUES('bob','bob@example.com','x','user')`)
+	if err != nil {
+		t.Fatalf("seed second user: %v", err)
+	}
+	otherUserID, _ := res.LastInsertId()
+
+	_, err = svc.Create(otherUserID, shares.CreateShareRequest{FileID: fileID})
+	if err == nil {
+		t.Fatal("expected error when non-owner tries to share file, got nil")
+	}
+}
+
 func TestDeleteShare(t *testing.T) {
 	database, userID, fileID := setup(t)
 	svc := shares.NewService(database)
