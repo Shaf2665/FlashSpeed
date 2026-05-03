@@ -109,8 +109,9 @@ func main() {
 		r.Delete("/api/shares/{id}", shareHandler.Delete)
 	})
 
-	// Public share resolve — no auth required, must be before SPA catch-all.
+	// Public share endpoints — no auth required, must be before SPA catch-all.
 	r.Get("/api/s/{token}", shareHandler.Resolve)
+	r.Get("/api/s/{token}/download", shareHandler.Download)
 
 	// serve embedded Svelte SPA (wired in Task 13)
 	r.Get("/*", serveFrontend())

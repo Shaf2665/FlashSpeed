@@ -5,6 +5,7 @@
   export let token
 
   let loading = true
+  let submitting = false
   let error = ''        // 404 / 410 / unexpected
   let share = null
   let file = null
@@ -53,7 +54,11 @@
 
   async function handlePasswordSubmit() {
     hasTriedPassword = true
+    submitting = true
     await resolveShare(password)
+    submitting = false
+    // clear password on success (when needsPassword becomes false)
+    if (!needsPassword) password = ''
   }
 
   function formatBytes(b) {
@@ -112,22 +117,10 @@
   <div class="card">
     <h1 class="brand">⚡ FlashySpeed</h1>
 
-    {#if loading}
+    {#if loading && !needsPassword && !share && !error}
       <p class="spinner">Loading...</p>
 
-    {:else if error}
-      <p class="error-msg">{error}</p>
-
-    {:else if needsPassword}
-      <p class="pwd-hint">This share is password-protected.</p>
-      {#if passwordError}<div class="error-msg">{passwordError}</div>{/if}
-      <form on:submit|preventDefault={handlePasswordSubmit}>
-        <label>Password</label>
-        <input type="password" bind:value={password} autocomplete="current-password" />
-        <button class="submit-btn" disabled={loading}>Unlock</button>
-      </form>
-
-    {:else if file}
+    {:else if share}
       <div class="file-icon">{mimeIcon(file.mime_type)}</div>
       <div class="filename">{file.name}</div>
 
@@ -146,14 +139,27 @@
       </div>
 
       {#if !file.is_dir}
-        <!-- TODO: wire up share-token-based download in P2-3 -->
-        <!-- This link requires auth; unauthenticated users will get 401 until P2-3 adds share token support -->
-        <a class="download-btn" href="/api/files/{file.id}/download" download={file.name}>
+        <a class="download-btn" href="/api/s/{token}/download" download={file.name}>
           ⬇ Download
         </a>
       {:else}
         <div class="meta">Directory sharing — individual download not available.</div>
       {/if}
+
+    {:else if needsPassword}
+      <p class="pwd-hint">This share is password-protected.</p>
+      {#if passwordError}<p class="error-msg" aria-live="assertive">{passwordError}</p>{/if}
+      <form on:submit|preventDefault={handlePasswordSubmit}>
+        <label>Password</label>
+        <input type="password" bind:value={password} autocomplete="current-password" />
+        <button class="submit-btn" disabled={submitting}>
+          {submitting ? 'Checking...' : 'Unlock'}
+        </button>
+      </form>
+
+    {:else if error}
+      <p class="error-msg">{error}</p>
+
     {/if}
   </div>
 </div>

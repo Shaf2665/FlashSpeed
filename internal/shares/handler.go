@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -156,4 +159,42 @@ func (h *Handler) Resolve(w http.ResponseWriter, r *http.Request) {
 			IsDir:    file.IsDir,
 		},
 	})
+}
+
+// Download handles GET /api/s/{token}/download — serves the file directly, no auth required.
+func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	password := r.Header.Get("X-Share-Password")
+
+	share, fileRow, err := h.svc.Resolve(token, password, nil)
+	if err != nil {
+		if errors.Is(err, ErrWrongPassword) {
+			writeError(w, http.StatusUnauthorized, "wrong password")
+			return
+		}
+		if errors.Is(err, ErrShareExpired) {
+			writeError(w, http.StatusGone, "share expired")
+			return
+		}
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	_ = share
+
+	absPath := filepath.Join(fileRow.DriveMount, fileRow.RelPath)
+	f, err := os.Open(absPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "file open failed")
+		return
+	}
+	defer f.Close()
+
+	info, _ := f.Stat()
+	var modTime time.Time
+	if info != nil {
+		modTime = info.ModTime()
+	}
+
+	w.Header().Set("Content-Disposition", `attachment; filename="`+fileRow.Name+`"`)
+	http.ServeContent(w, r, fileRow.Name, modTime, f)
 }
