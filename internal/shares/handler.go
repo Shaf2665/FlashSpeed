@@ -71,7 +71,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.MaxDownloads != nil && *req.MaxDownloads <= 0 {
-		http.Error(w, `{"error":"max_downloads must be positive"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "max_downloads must be positive")
 		return
 	}
 

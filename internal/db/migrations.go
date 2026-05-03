@@ -59,8 +59,6 @@ CREATE TABLE IF NOT EXISTS shares (
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id);
-
 CREATE TABLE IF NOT EXISTS tus_uploads (
   id            TEXT    PRIMARY KEY,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -74,7 +72,7 @@ CREATE TABLE IF NOT EXISTS tus_uploads (
 );
 `
 
-const currentVersion = 1
+const currentVersion = 2
 
 func (db *DB) migrate() error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
@@ -84,14 +82,20 @@ func (db *DB) migrate() error {
 	var version int
 	_ = db.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&version)
 
-	if version >= currentVersion {
-		return nil
+	if version < 1 {
+		if _, err := db.Exec(schema); err != nil {
+			return fmt.Errorf("apply schema: %w", err)
+		}
+		version = 1
 	}
 
-	if _, err := db.Exec(schema); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
+	if version < 2 {
+		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id)`); err != nil {
+			return fmt.Errorf("migration v2: %w", err)
+		}
+		version = 2
 	}
 
-	_, err := db.Exec(`INSERT OR REPLACE INTO schema_version(version) VALUES(?)`, currentVersion)
+	_, err := db.Exec(`INSERT OR REPLACE INTO schema_version(version) VALUES(?)`, version)
 	return err
 }

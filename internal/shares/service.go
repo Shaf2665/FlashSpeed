@@ -63,7 +63,13 @@ func NewService(database *db.DB) *Service {
 func (s *Service) Create(ownerID int64, req CreateShareRequest) (*Share, error) {
 	var fileOwner int64
 	err := s.db.QueryRow(`SELECT user_id FROM files WHERE id=? AND deleted_at IS NULL`, req.FileID).Scan(&fileOwner)
-	if err != nil || fileOwner != ownerID {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotOwned
+		}
+		return nil, err
+	}
+	if fileOwner != ownerID {
 		return nil, ErrNotOwned
 	}
 
