@@ -2,6 +2,7 @@ package files
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
 	"os"
 	"strconv"
@@ -131,6 +132,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		modTime = info.ModTime()
 	}
 
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	w.Header().Set("Content-Disposition", disposition)
 	http.ServeContent(w, r, name, modTime, f)
 }

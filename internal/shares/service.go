@@ -36,6 +36,7 @@ type FileRow struct {
 	Name       string `json:"name"`
 	MimeType   string `json:"mime_type"`
 	IsDir      bool   `json:"is_dir"`
+	SizeBytes  int64  `json:"size_bytes"`
 	RelPath    string `json:"-"`
 	DriveMount string `json:"-"`
 }
@@ -240,11 +241,11 @@ func (s *Service) Resolve(token string, password string, callerID *int64) (*Shar
 	var fr FileRow
 	var isDir int
 	err = tx.QueryRow(`
-		SELECT f.id, f.name, COALESCE(f.mime_type, ''), f.is_dir, f.rel_path, d.mount_path
+		SELECT f.id, f.name, COALESCE(f.mime_type, ''), f.is_dir, f.size_bytes, f.rel_path, d.mount_path
 		FROM files f
 		JOIN drives d ON d.id = f.drive_id
 		WHERE f.id = ?
-	`, sh.FileID).Scan(&fr.ID, &fr.Name, &fr.MimeType, &isDir, &fr.RelPath, &fr.DriveMount)
+	`, sh.FileID).Scan(&fr.ID, &fr.Name, &fr.MimeType, &isDir, &fr.SizeBytes, &fr.RelPath, &fr.DriveMount)
 	if err != nil {
 		return nil, nil, err
 	}

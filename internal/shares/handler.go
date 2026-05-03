@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -145,18 +146,20 @@ func (h *Handler) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type fileResp struct {
-		ID       int64  `json:"id"`
-		Name     string `json:"name"`
-		MimeType string `json:"mime_type"`
-		IsDir    bool   `json:"is_dir"`
+		ID        int64  `json:"id"`
+		Name      string `json:"name"`
+		MimeType  string `json:"mime_type"`
+		IsDir     bool   `json:"is_dir"`
+		SizeBytes int64  `json:"size_bytes"`
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"share": share,
 		"file": fileResp{
-			ID:       file.ID,
-			Name:     file.Name,
-			MimeType: file.MimeType,
-			IsDir:    file.IsDir,
+			ID:        file.ID,
+			Name:      file.Name,
+			MimeType:  file.MimeType,
+			IsDir:     file.IsDir,
+			SizeBytes: file.SizeBytes,
 		},
 	})
 }
@@ -195,6 +198,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		modTime = info.ModTime()
 	}
 
-	w.Header().Set("Content-Disposition", `attachment; filename="`+fileRow.Name+`"`)
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": fileRow.Name})
+	w.Header().Set("Content-Disposition", disposition)
 	http.ServeContent(w, r, fileRow.Name, modTime, f)
 }
