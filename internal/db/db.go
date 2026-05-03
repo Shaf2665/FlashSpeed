@@ -28,7 +28,11 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
-	sqldb.SetMaxOpenConns(1) // SQLite WAL: one writer, many readers via pool
+	// SQLite WAL allows concurrent readers; use an unlimited pool and let the
+	// driver serialise writes via busy_timeout. A single connection would
+	// serialise all requests including concurrent reads.
+	sqldb.SetMaxOpenConns(0) // unlimited
+	sqldb.SetMaxIdleConns(5)
 
 	db := &DB{sqldb}
 	if err := db.migrate(); err != nil {

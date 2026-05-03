@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flashyspeed/flashyspeed/internal/db"
@@ -35,6 +36,11 @@ func (s *Service) drivePath(driveID int64) (string, error) {
 }
 
 func (s *Service) Mkdir(userID, driveID, parentID int64, name string) (int64, error) {
+	// Blocker 1: reject names that contain path separators or are dot-paths
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return 0, fmt.Errorf("invalid directory name")
+	}
+
 	mountPath, err := s.drivePath(driveID)
 	if err != nil {
 		return 0, fmt.Errorf("drive not found: %w", err)
@@ -42,12 +48,24 @@ func (s *Service) Mkdir(userID, driveID, parentID int64, name string) (int64, er
 
 	relPath := name
 	if parentID != 0 {
+		// Blocker 2: verify parent_id belongs to the same user and drive
 		var parentRel string
-		s.db.QueryRow(`SELECT rel_path FROM files WHERE id=?`, parentID).Scan(&parentRel)
+		err := s.db.QueryRow(`SELECT rel_path FROM files WHERE id=? AND user_id=? AND drive_id=? AND deleted_at IS NULL`,
+			parentID, userID, driveID).Scan(&parentRel)
+		if err != nil {
+			return 0, fmt.Errorf("parent directory not found or not owned by user")
+		}
 		relPath = filepath.Join(parentRel, name)
 	}
 
 	absPath := filepath.Join(mountPath, relPath)
+
+	// Blocker 1: containment check — ensure absPath doesn't escape mountPath
+	mountClean := filepath.Clean(mountPath) + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(absPath)+string(os.PathSeparator), mountClean) {
+		return 0, fmt.Errorf("name escapes drive root")
+	}
+
 	if err := os.MkdirAll(absPath, 0755); err != nil {
 		return 0, fmt.Errorf("mkdir on disk: %w", err)
 	}
@@ -138,11 +156,91 @@ func (s *Service) Trash(userID int64) ([]Entry, error) {
 }
 
 func (s *Service) Rename(userID, fileID int64, newName string) error {
-	_, err := s.db.Exec(`
-		UPDATE files SET name=?, updated_at=CURRENT_TIMESTAMP
-		WHERE id=? AND user_id=? AND deleted_at IS NULL
-	`, newName, fileID, userID)
-	return err
+	// Validate name
+	if newName == "" || newName == "." || newName == ".." ||
+		strings.ContainsAny(newName, "/\\") {
+		return fmt.Errorf("invalid name")
+	}
+
+	// Fetch current record
+	var oldRelPath, mountPath string
+	var driveID int64
+	var isDir int
+	err := s.db.QueryRow(`
+		SELECT f.rel_path, f.drive_id, f.is_dir, d.mount_path
+		FROM files f JOIN drives d ON d.id=f.drive_id
+		WHERE f.id=? AND f.user_id=? AND f.deleted_at IS NULL
+	`, fileID, userID).Scan(&oldRelPath, &driveID, &isDir, &mountPath)
+	if err != nil {
+		return fmt.Errorf("file not found: %w", err)
+	}
+
+	newRelPath := filepath.Join(filepath.Dir(oldRelPath), newName)
+	oldAbs := filepath.Join(mountPath, oldRelPath)
+	newAbs := filepath.Join(mountPath, newRelPath)
+
+	// Containment check
+	mountClean := filepath.Clean(mountPath) + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(newAbs)+string(os.PathSeparator), mountClean) {
+		return fmt.Errorf("new name escapes drive root")
+	}
+
+	// Rename on disk first
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		return fmt.Errorf("rename on disk failed: %w", err)
+	}
+
+	// Update DB in transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		// Try to undo the FS rename
+		os.Rename(newAbs, oldAbs)
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		UPDATE files SET name=?, rel_path=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND user_id=?
+	`, newName, newRelPath, fileID, userID); err != nil {
+		os.Rename(newAbs, oldAbs) // undo FS rename
+		return err
+	}
+
+	// For directories: update descendants' rel_path
+	if isDir == 1 {
+		// Get all descendants
+		rows, err := tx.Query(`
+			SELECT id, rel_path FROM files
+			WHERE drive_id=? AND user_id=? AND deleted_at IS NULL
+			AND rel_path LIKE ?
+		`, driveID, userID, oldRelPath+"/%")
+		if err != nil {
+			os.Rename(newAbs, oldAbs)
+			return err
+		}
+		defer rows.Close()
+		type update struct {
+			id      int64
+			newPath string
+		}
+		var updates []update
+		for rows.Next() {
+			var id int64
+			var rp string
+			rows.Scan(&id, &rp)
+			updates = append(updates, update{id, newRelPath + rp[len(oldRelPath):]})
+		}
+		rows.Close()
+		for _, u := range updates {
+			if _, err := tx.Exec(`UPDATE files SET rel_path=? WHERE id=?`, u.newPath, u.id); err != nil {
+				os.Rename(newAbs, oldAbs)
+				return err
+			}
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *Service) AbsPath(fileID int64) (string, error) {

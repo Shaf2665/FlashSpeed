@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/flashyspeed/flashyspeed/internal/auth"
 	"github.com/flashyspeed/flashyspeed/internal/db"
 )
 
@@ -50,6 +51,11 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) TriggerScan(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	if claims == nil || claims.Role != "admin" {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
 	detected := ScanSystem()
 	if err := h.scanner.Sync(detected); err != nil {
 		http.Error(w, `{"error":"scan failed"}`, http.StatusInternalServerError)
