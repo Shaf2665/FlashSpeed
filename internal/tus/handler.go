@@ -40,6 +40,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	meta := parseMetadata(r.Header.Get("Upload-Metadata"))
 	driveID, _ := strconv.ParseInt(meta["drive_id"], 10, 64)
+	if driveID == 0 {
+		http.Error(w, "drive_id required in Upload-Metadata", http.StatusBadRequest)
+		return
+	}
 	filename := meta["filename"]
 	if filename == "" {
 		filename = "upload"
@@ -126,7 +130,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newOffset := uploadOffset + written
-	h.db.Exec(`UPDATE tus_uploads SET upload_offset=? WHERE id=?`, newOffset, id)
+	if newOffset > uploadLength {
+		http.Error(w, "upload exceeds declared length", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if _, err := h.db.Exec(`UPDATE tus_uploads SET upload_offset=? WHERE id=?`, newOffset, id); err != nil {
+		http.Error(w, "offset update failed", http.StatusInternalServerError)
+		return
+	}
 
 	if newOffset >= uploadLength {
 		if err := h.finalize(id, userID, driveID, tempPath, destPath, uploadLength); err != nil {
@@ -155,16 +166,25 @@ func (h *Handler) finalize(uploadID string, userID, driveID int64, tempPath, des
 	}
 
 	mime := detectMIME(finalPath)
-	_, err := h.db.Exec(`
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
 		INSERT INTO files(user_id, drive_id, name, rel_path, size_bytes, mime_type, is_dir)
 		VALUES(?,?,?,?,?,?,0)
-	`, userID, driveID, filepath.Base(destPath), destPath, size, mime)
-	if err != nil {
+	`, userID, driveID, filepath.Base(destPath), destPath, size, mime); err != nil {
 		return err
 	}
 
-	h.db.Exec(`DELETE FROM tus_uploads WHERE id=?`, uploadID)
-	return nil
+	if _, err := tx.Exec(`DELETE FROM tus_uploads WHERE id=?`, uploadID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func parseMetadata(header string) map[string]string {
