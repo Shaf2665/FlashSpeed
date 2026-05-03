@@ -59,9 +59,13 @@ func main() {
 		scanner.AddManual(p)
 	}
 	if cfg.Storage.AutoDetectDrives {
-		scanner.Sync(drives.ScanSystem())
+		if err := scanner.Sync(drives.ScanSystem()); err != nil {
+			log.Printf("drive sync failed: %v", err)
+		}
 	} else {
-		scanner.Sync(nil)
+		if err := scanner.Sync(nil); err != nil {
+			log.Printf("drive sync failed: %v", err)
+		}
 	}
 
 	// handlers
@@ -132,15 +136,25 @@ func main() {
 
 func seedAdmin(database *db.DB) {
 	var count int
-	database.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&count)
+	if err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&count); err != nil {
+		log.Printf("seedAdmin: count query failed: %v", err)
+		return
+	}
 	if count > 0 {
 		return
 	}
-	hash, _ := auth.HashPassword("admin")
-	database.Exec(
+	hash, err := auth.HashPassword("admin")
+	if err != nil {
+		log.Printf("seedAdmin: hash failed: %v", err)
+		return
+	}
+	if _, err := database.Exec(
 		`INSERT INTO users(username,email,password_hash,role) VALUES('admin','admin@localhost',?,'admin')`,
 		hash,
-	)
+	); err != nil {
+		log.Printf("seedAdmin: insert failed: %v", err)
+		return
+	}
 	log.Println("Created default admin user: admin / admin — change the password immediately!")
 }
 
