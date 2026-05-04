@@ -3,9 +3,12 @@ server:
   data_dir: /var/lib/flashyspeed
 
 tls:
+  # self-signed | auto (Let's Encrypt) | manual (paths below)
   mode: self-signed
+  # auto: public hostname and ACME contact (required when mode=auto)
   domain: ""
   email: ""
+  # manual: PEM paths (required when mode=manual)
   cert_file: ""
   key_file: ""
 

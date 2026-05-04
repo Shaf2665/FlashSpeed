@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -127,14 +130,27 @@ func main() {
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	srv := &http.Server{Addr: addr, Handler: r}
 
-	tlsCfg, err := tlsmgr.SelfSigned(cfg.Server.DataDir + "/tls")
+	tlsDir := filepath.Join(cfg.Server.DataDir, "tls")
+	var tlsCfg *tls.Config
+	switch strings.ToLower(strings.TrimSpace(cfg.TLS.Mode)) {
+	case "auto":
+		tlsCfg, err = tlsmgr.AutoCert(cfg.TLS.Domain, cfg.TLS.Email, tlsDir)
+	case "manual":
+		tlsCfg, err = tlsmgr.Manual(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	default:
+		tlsCfg, err = tlsmgr.SelfSigned(tlsDir)
+	}
 	if err != nil {
 		log.Fatalf("TLS setup: %v", err)
 	}
 	srv.TLSConfig = tlsCfg
 
 	go func() {
-		log.Printf("FlashySpeed listening on https://localhost%s", addr)
+		if strings.ToLower(strings.TrimSpace(cfg.TLS.Mode)) == "auto" && strings.TrimSpace(cfg.TLS.Domain) != "" {
+			log.Printf("FlashySpeed listening with ACME on https://%s%s", cfg.TLS.Domain, addr)
+		} else {
+			log.Printf("FlashySpeed listening on https://localhost%s", addr)
+		}
 		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}
