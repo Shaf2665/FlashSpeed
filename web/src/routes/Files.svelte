@@ -333,7 +333,8 @@
   :global(body) { margin: 0; background: #0f172a; color: #e2e8f0; font-family: monospace; }
   nav { background: #1e293b; border-bottom: 1px solid #334155; padding: 12px 20px;
         display: flex; align-items: center; gap: 16px; }
-  nav h1 { color: #38bdf8; margin: 0; font-size: 16px; flex: 1; }
+  nav h1 { color: #38bdf8; margin: 0; font-size: 16px; flex: 1; display: flex; align-items: center; gap: 8px; }
+  .nav-logo { width: 32px; height: 32px; border-radius: 6px; }
   select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
            padding: 4px 8px; border-radius: 4px; font-family: monospace; }
   .toolbar { padding: 10px 20px; display: flex; gap: 8px; border-bottom: 1px solid #1e293b; }
@@ -401,7 +402,7 @@
 </style>
 
 <nav>
-  <h1>⚡ FlashySpeed</h1>
+  <h1><img src="/logo.svg" alt="FlashySpeed logo" class="nav-logo" /> FlashySpeed</h1>
   <select bind:value={$currentDriveId} on:change={() => currentParentId.set(0)}>
     {#each drives as d}
       <option value={d.id}>{d.name}</option>

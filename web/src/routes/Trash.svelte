@@ -93,7 +93,8 @@
   :global(body) { margin: 0; background: #0f172a; color: #e2e8f0; font-family: monospace; }
   nav { background: #1e293b; border-bottom: 1px solid #334155; padding: 12px 20px;
         display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  nav h1 { color: #38bdf8; margin: 0; font-size: 16px; flex: 1; }
+  nav h1 { color: #38bdf8; margin: 0; font-size: 16px; flex: 1; display: flex; align-items: center; gap: 8px; }
+  .nav-logo { width: 32px; height: 32px; border-radius: 6px; }
   button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; padding: 6px 12px;
            border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px; }
   button:hover:not(:disabled) { background: #334155; }
@@ -112,7 +113,7 @@
 </style>
 
 <nav>
-  <h1>⚡ Trash</h1>
+  <h1><img src="/logo.svg" alt="FlashySpeed logo" class="nav-logo" /> Trash</h1>
   <button on:click={() => navigate('/')}>← Files</button>
   <button on:click={logout}>Logout</button>
 </nav>

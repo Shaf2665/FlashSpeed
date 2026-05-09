@@ -91,7 +91,8 @@
   .wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
   .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px;
           padding: 40px 32px; width: 360px; text-align: center; }
-  .brand { color: #38bdf8; font-size: 20px; margin: 0 0 28px; }
+  .brand { color: #38bdf8; font-size: 20px; margin: 0 0 28px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .brand-logo { width: 40px; height: 40px; border-radius: 8px; }
   .file-icon { font-size: 48px; margin-bottom: 12px; }
   .filename { font-size: 16px; font-weight: bold; word-break: break-all; margin-bottom: 8px; }
   .meta { color: #64748b; font-size: 12px; margin-bottom: 6px; }
@@ -115,7 +116,7 @@
 
 <div class="wrap">
   <div class="card">
-    <h1 class="brand">⚡ FlashySpeed</h1>
+    <h1 class="brand"><img src="/logo.svg" alt="FlashySpeed logo" class="brand-logo" /> FlashySpeed</h1>
 
     {#if loading && !needsPassword && !share && !error}
       <p class="spinner">Loading...</p>

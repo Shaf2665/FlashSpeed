@@ -27,7 +27,8 @@
   :global(body) { margin: 0; background: #0f172a; color: #e2e8f0; font-family: monospace; }
   .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
   .login-box { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 32px; width: 320px; }
-  h1 { color: #38bdf8; margin: 0 0 24px; font-size: 20px; }
+  h1 { color: #38bdf8; margin: 0 0 24px; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+  .login-logo { width: 40px; height: 40px; border-radius: 8px; }
   label { display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px; }
   input { width: 100%; box-sizing: border-box; background: #0f172a; border: 1px solid #334155;
           color: #e2e8f0; padding: 8px; border-radius: 4px; font-family: monospace; margin-bottom: 16px; }
@@ -39,7 +40,7 @@
 
 <div class="login-wrap">
   <div class="login-box">
-    <h1>⚡ FlashySpeed</h1>
+    <h1><img src="/logo.svg" alt="FlashySpeed logo" class="login-logo" /> FlashySpeed</h1>
     {#if error}<div class="error">{error}</div>{/if}
     <form on:submit|preventDefault={handleSubmit}>
       <label>Username</label>
