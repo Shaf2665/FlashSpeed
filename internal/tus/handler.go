@@ -178,6 +178,20 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) finalize(uploadID string, userID, driveID int64, tempPath, destPath string, size int64) error {
+	// Quota enforcement: check user's quota before finalizing
+	var quotaBytes, usedBytes int64
+	if err := h.db.QueryRow(`SELECT quota_bytes FROM users WHERE id=?`, userID).Scan(&quotaBytes); err == nil {
+		if quotaBytes > 0 {
+			h.db.QueryRow(
+				`SELECT COALESCE(SUM(size_bytes),0) FROM files WHERE user_id=? AND deleted_at IS NULL`,
+				userID,
+			).Scan(&usedBytes)
+			if usedBytes+size > quotaBytes {
+				return fmt.Errorf("quota exceeded: %d bytes used of %d", usedBytes+size, quotaBytes)
+			}
+		}
+	}
+
 	var mountPath string
 	if err := h.db.QueryRow(`SELECT mount_path FROM drives WHERE id=?`, driveID).Scan(&mountPath); err != nil {
 		return fmt.Errorf("drive not found: %w", err)
