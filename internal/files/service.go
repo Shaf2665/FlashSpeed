@@ -364,6 +364,42 @@ func (s *Service) Rename(userID, fileID int64, newName string) error {
 	return nil
 }
 
+// Search returns entries whose name matches the query (case-insensitive LIKE).
+func (s *Service) Search(userID int64, query string) ([]Entry, error) {
+	if query == "" {
+		return []Entry{}, nil
+	}
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	pattern := "%" + escaped + "%"
+
+	rows, err := s.db.Query(`
+		SELECT id,name,is_dir,size_bytes,COALESCE(mime_type,''),parent_id,created_at,updated_at
+		FROM files
+		WHERE user_id=? AND deleted_at IS NULL AND name LIKE ? ESCAPE '\'
+		ORDER BY name
+		LIMIT 200
+	`, userID, pattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []Entry
+	for rows.Next() {
+		var e Entry
+		var isDir int
+		var pID *int64
+		rows.Scan(&e.ID, &e.Name, &isDir, &e.SizeBytes, &e.MimeType, &pID, &e.CreatedAt, &e.UpdatedAt)
+		e.IsDir = isDir == 1
+		e.ParentID = pID
+		entries = append(entries, e)
+	}
+	if entries == nil {
+		entries = []Entry{}
+	}
+	return entries, nil
+}
+
 func (s *Service) AbsPath(fileID int64) (string, error) {
 	var relPath string
 	var mountPath string

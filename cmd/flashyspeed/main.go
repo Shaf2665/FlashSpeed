@@ -99,7 +99,10 @@ func main() {
 		r.Get("/api/auth/me", authHandler.Me)
 
 		r.Get("/api/files", fileHandler.List)
+		r.Get("/api/files/search", fileHandler.Search)
 		r.Post("/api/files/mkdir", fileHandler.Mkdir)
+		r.Post("/api/files/zip", fileHandler.ZipDownload)
+		r.Delete("/api/files", fileHandler.BulkDelete)
 		r.Delete("/api/files/{id}", fileHandler.Delete)
 		r.Get("/api/trash", fileHandler.TrashList)
 		r.Delete("/api/trash", fileHandler.EmptyTrash)
@@ -125,6 +128,8 @@ func main() {
 		r.Post("/api/admin/users", adminHandler.CreateUser)
 		r.Patch("/api/admin/users/{id}", adminHandler.UpdateUser)
 		r.Delete("/api/admin/users/{id}", adminHandler.DeleteUser)
+
+		r.Get("/api/admin/storage", adminHandler.StorageDashboard)
 
 		r.Get("/api/shares", shareHandler.List)
 		r.Post("/api/shares", shareHandler.Create)

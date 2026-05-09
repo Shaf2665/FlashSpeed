@@ -83,6 +83,91 @@ func (h *Handler) TailscaleUp(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, `{"status":"connected"}`)
 }
 
+// ---- Storage Dashboard ----
+
+type driveStats struct {
+	DriveID   int64  `json:"drive_id"`
+	DriveName string `json:"drive_name"`
+	MountPath string `json:"mount_path"`
+	TotalFiles int64 `json:"total_files"`
+	TotalBytes int64 `json:"total_bytes"`
+}
+
+type userStats struct {
+	UserID     int64  `json:"user_id"`
+	Username   string `json:"username"`
+	QuotaBytes int64  `json:"quota_bytes"`
+	UsedBytes  int64  `json:"used_bytes"`
+}
+
+type storageReport struct {
+	Drives []driveStats `json:"drives"`
+	Users  []userStats  `json:"users"`
+}
+
+// StorageDashboard handles GET /api/admin/storage
+func (h *Handler) StorageDashboard(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	if claims == nil || claims.Role != "admin" {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	// Per-drive stats
+	driveRows, err := h.db.Query(`
+		SELECT d.id, d.name, d.mount_path,
+		       COUNT(f.id) AS total_files,
+		       COALESCE(SUM(f.size_bytes),0) AS total_bytes
+		FROM drives d
+		LEFT JOIN files f ON f.drive_id=d.id AND f.deleted_at IS NULL AND f.is_dir=0
+		GROUP BY d.id
+		ORDER BY d.id
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer driveRows.Close()
+
+	var drives []driveStats
+	for driveRows.Next() {
+		var s driveStats
+		driveRows.Scan(&s.DriveID, &s.DriveName, &s.MountPath, &s.TotalFiles, &s.TotalBytes)
+		drives = append(drives, s)
+	}
+	if drives == nil {
+		drives = []driveStats{}
+	}
+
+	// Per-user stats
+	userRows, err := h.db.Query(`
+		SELECT u.id, u.username, u.quota_bytes,
+		       COALESCE(SUM(f.size_bytes),0) AS used_bytes
+		FROM users u
+		LEFT JOIN files f ON f.user_id=u.id AND f.deleted_at IS NULL AND f.is_dir=0
+		GROUP BY u.id
+		ORDER BY used_bytes DESC
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer userRows.Close()
+
+	var users []userStats
+	for userRows.Next() {
+		var s userStats
+		userRows.Scan(&s.UserID, &s.Username, &s.QuotaBytes, &s.UsedBytes)
+		users = append(users, s)
+	}
+	if users == nil {
+		users = []userStats{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(storageReport{Drives: drives, Users: users})
+}
+
 // ---- User Management ----
 
 type userRow struct {

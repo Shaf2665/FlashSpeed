@@ -1,7 +1,10 @@
 package files
 
 import (
+	"archive/zip"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"os"
@@ -186,4 +189,90 @@ func (h *Handler) EmptyTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Search handles GET /api/files/search?q=<term>
+func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	q := r.URL.Query().Get("q")
+	entries, err := h.svc.Search(claims.UserID, q)
+	if err != nil {
+		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+// BulkDelete handles DELETE /api/files with body {"ids": [1, 2, 3]}
+func (h *Handler) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	var body struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.IDs) == 0 {
+		http.Error(w, `{"error":"ids required"}`, http.StatusBadRequest)
+		return
+	}
+	var failed []int64
+	for _, id := range body.IDs {
+		if err := h.svc.Delete(claims.UserID, id); err != nil {
+			failed = append(failed, id)
+		}
+	}
+	if len(failed) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMultiStatus)
+		json.NewEncoder(w).Encode(map[string]interface{}{"failed_ids": failed})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ZipDownload handles POST /api/files/zip with body {"ids": [1, 2, 3]}
+// Streams a ZIP archive of the requested files (non-directories, ownership verified).
+func (h *Handler) ZipDownload(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r)
+	var body struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.IDs) == 0 {
+		http.Error(w, `{"error":"ids required"}`, http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="files.zip"`)
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	for _, id := range body.IDs {
+		var ownerID int64
+		var name string
+		var isDir int
+		if err := h.db.QueryRow(
+			`SELECT user_id, name, is_dir FROM files WHERE id=? AND deleted_at IS NULL`, id,
+		).Scan(&ownerID, &name, &isDir); err != nil || ownerID != claims.UserID || isDir == 1 {
+			continue // skip not-found, not-owned, or directories
+		}
+
+		absPath, err := h.svc.AbsPath(id)
+		if err != nil {
+			continue
+		}
+
+		f, err := os.Open(absPath)
+		if err != nil {
+			continue
+		}
+
+		fw, err := zw.Create(fmt.Sprintf("%d_%s", id, name))
+		if err != nil {
+			f.Close()
+			continue
+		}
+		io.Copy(fw, f)
+		f.Close()
+	}
 }
