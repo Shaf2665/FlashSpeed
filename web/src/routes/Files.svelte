@@ -11,6 +11,15 @@
   let newFolderName = ''
   let showNewFolder = false
 
+  // --- Search state ---
+  let searchQuery = ''
+  let searchResults = null   // null = not searching, [] = no results, [...] = results
+  let searchLoading = false
+
+  // --- Bulk selection state ---
+  let selected = new Set()   // Set of entry IDs
+  let bulkLoading = false
+
   // --- Share dialog state ---
   let shareEntry = null   // entry being shared
   let shareUrl = ''       // generated share URL after create
@@ -100,6 +109,70 @@
   function logout() {
     token.set(null)
     navigate('/login', { replace: true })
+  }
+
+  // ---- Search ----
+
+  async function doSearch() {
+    if (!searchQuery.trim()) { searchResults = null; return }
+    searchLoading = true
+    try {
+      searchResults = await api.searchFiles(searchQuery.trim())
+    } catch (e) { error = e.message }
+    searchLoading = false
+  }
+
+  function clearSearch() {
+    searchQuery = ''
+    searchResults = null
+  }
+
+  // ---- Bulk selection ----
+
+  function toggleSelect(id) {
+    const s = new Set(selected)
+    if (s.has(id)) s.delete(id); else s.add(id)
+    selected = s
+  }
+
+  function toggleSelectAll() {
+    const list = searchResults ?? entries
+    if (selected.size === list.filter(e => !e.is_dir).length) {
+      selected = new Set()
+    } else {
+      selected = new Set(list.filter(e => !e.is_dir).map(e => e.id))
+    }
+  }
+
+  async function bulkDeleteSelected() {
+    if (!selected.size) return
+    if (!confirm(`Move ${selected.size} file(s) to trash?`)) return
+    bulkLoading = true
+    try {
+      await api.bulkDelete([...selected])
+      selected = new Set()
+      await loadFiles()
+    } catch (e) { error = e.message }
+    bulkLoading = false
+  }
+
+  async function zipDownloadSelected() {
+    if (!selected.size) return
+    const ids = [...selected]
+    const res = await fetch('/api/files/zip', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${$token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids }),
+    })
+    if (!res.ok) { error = 'ZIP download failed'; return }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'files.zip'; a.click()
+    URL.revokeObjectURL(url)
   }
 
   function formatBytes(b) {
@@ -230,6 +303,13 @@
   .new-folder { display: flex; gap: 8px; padding: 8px 20px; align-items: center; }
   .new-folder input { background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
                       padding: 5px 8px; border-radius: 4px; font-family: monospace; }
+  .search-bar { display: flex; gap: 8px; padding: 8px 20px; align-items: center;
+                border-bottom: 1px solid #1e293b; }
+  .search-bar input { flex: 1; background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
+                      padding: 5px 8px; border-radius: 4px; font-family: monospace; }
+  .bulk-bar { padding: 6px 20px; display: flex; gap: 8px; align-items: center;
+              background: #1e293b; border-bottom: 1px solid #334155; font-size: 12px; color: #94a3b8; }
+  input[type="checkbox"] { accent-color: #38bdf8; cursor: pointer; }
 
   /* Modal shared styles */
   .modal-backdrop {
@@ -271,17 +351,30 @@
     {/each}
   </select>
   <button on:click={() => navigate('/trash')}>🗑 Trash</button>
+  <button on:click={() => navigate('/admin')}>⚙ Admin</button>
   <button on:click={logout}>Logout</button>
 </nav>
 
 {#if error}<div class="error">{error}</div>{/if}
 
+<!-- Search bar -->
+<div class="search-bar">
+  <input bind:value={searchQuery} placeholder="🔍 Search files…"
+         on:keydown={e => e.key === 'Enter' && doSearch()} />
+  <button on:click={doSearch} disabled={searchLoading}>{searchLoading ? '…' : 'Search'}</button>
+  {#if searchResults !== null}
+    <button on:click={clearSearch}>✕ Clear</button>
+  {/if}
+</div>
+
 <div class="toolbar">
-  <label>
-    <button>⬆ Upload</button>
-    <input type="file" style="display:none" on:change={handleUpload} />
-  </label>
-  <button on:click={() => showNewFolder = !showNewFolder}>📁 New Folder</button>
+  {#if searchResults === null}
+    <label>
+      <button>⬆ Upload</button>
+      <input type="file" style="display:none" on:change={handleUpload} />
+    </label>
+    <button on:click={() => showNewFolder = !showNewFolder}>📁 New Folder</button>
+  {/if}
 </div>
 
 {#if showNewFolder}
@@ -295,18 +388,50 @@
 {#if loading}
   <p style="padding:20px;color:#64748b">Loading...</p>
 {:else}
+
+  <!-- Bulk action bar (shown when items selected) -->
+  {#if selected.size > 0}
+    <div class="bulk-bar">
+      <span>{selected.size} selected</span>
+      <button on:click={bulkDeleteSelected} disabled={bulkLoading}>🗑 Delete Selected</button>
+      <button on:click={zipDownloadSelected} disabled={bulkLoading}>⬇ ZIP Download</button>
+      <button on:click={() => selected = new Set()}>✕ Clear</button>
+    </div>
+  {/if}
+
+  {#if searchResults !== null}
+    <!-- Search results -->
+    <div style="padding:8px 20px;font-size:12px;color:#64748b">
+      {searchResults.length} result(s) for "{searchQuery}"
+    </div>
+  {/if}
+
   <table>
     <thead>
-      <tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr>
+      <tr>
+        <th style="width:32px">
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <input type="checkbox" on:click={toggleSelectAll}
+                 checked={selected.size > 0 && selected.size === (searchResults ?? entries).filter(e => !e.is_dir).length} />
+        </th>
+        <th>Name</th><th>Size</th><th>Modified</th><th></th>
+      </tr>
     </thead>
     <tbody>
-      {#each entries as e}
+      {#each (searchResults ?? entries) as e}
         <tr>
+          <td>
+            {#if !e.is_dir}
+              <input type="checkbox" checked={selected.has(e.id)}
+                     on:change={() => toggleSelect(e.id)} />
+            {/if}
+          </td>
           <td>
             {#if e.is_dir}
               <span class="icon">📁</span>
               <span style="cursor:pointer;color:#38bdf8"
-                    on:click={() => { currentParentId.set(e.id); loadFiles() }}>
+                    on:click={() => { currentParentId.set(e.id); loadFiles(); clearSearch() }}>
                 {e.name}
               </span>
             {:else}
@@ -331,8 +456,12 @@
           </td>
         </tr>
       {/each}
-      {#if entries.length === 0}
-        <tr><td colspan="4" style="color:#64748b;text-align:center;padding:40px">Empty folder</td></tr>
+      {#if (searchResults ?? entries).length === 0}
+        <tr>
+          <td colspan="5" style="color:#64748b;text-align:center;padding:40px">
+            {searchResults !== null ? 'No results found' : 'Empty folder'}
+          </td>
+        </tr>
       {/if}
     </tbody>
   </table>
