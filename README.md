@@ -505,6 +505,112 @@ Shows how much space each drive and each user is using, with colour-coded bars (
 
 ---
 
+## 🔄 Updating FlashySpeed
+
+When a new version is released, follow the steps below for whichever installation method you used. Your files and data are never affected by an update.
+
+---
+
+### Updating on Windows
+
+Open **PowerShell**, navigate to your FlashSpeed folder, and run:
+
+```powershell
+# Step 1 — Download the latest changes
+git pull
+
+# Step 2 — Rebuild the web interface
+cd web
+npm install
+npm run build
+cd ..
+
+# Step 3 — Rebuild the program
+go build -o flashyspeed.exe ./cmd/flashyspeed
+
+# Step 4 — Restart FlashySpeed
+# Stop the currently running flashyspeed.exe (close the terminal window it's running in)
+# Then start it again:
+$env:FS_JWT_SECRET = "your-secret-key-here"
+.\flashyspeed.exe
+```
+
+> 💡 If you created a `start.ps1` file earlier, you only need to run Steps 1–3, then use your script to restart as usual.
+
+---
+
+### Updating on Linux (manual install)
+
+Open a terminal, navigate to your FlashSpeed folder, and run:
+
+```bash
+# Step 1 — Download the latest changes
+git pull
+
+# Step 2 — Rebuild the web interface
+cd web && npm install && npm run build && cd ..
+
+# Step 3 — Rebuild the program
+go build -o flashyspeed ./cmd/flashyspeed
+
+# Step 4 — Restart FlashySpeed
+# If running manually, stop it (Ctrl+C) and start it again:
+export FS_JWT_SECRET="your-secret-key-here"
+./flashyspeed
+```
+
+---
+
+### Updating on Linux (systemd service)
+
+If you followed the systemd setup and FlashySpeed runs as a background service:
+
+```bash
+# Step 1 — Download the latest changes
+cd /path/to/FlashSpeed
+git pull
+
+# Step 2 — Rebuild the web interface
+cd web && npm install && npm run build && cd ..
+
+# Step 3 — Rebuild and replace the program
+go build -o flashyspeed ./cmd/flashyspeed
+sudo cp flashyspeed /usr/local/bin/flashyspeed
+
+# Step 4 — Restart the service
+sudo systemctl restart flashyspeed
+
+# Step 5 — Check it started correctly
+sudo systemctl status flashyspeed
+```
+
+You should see `active (running)` in green.
+
+---
+
+### Updating with Docker
+
+This is the easiest update method — just two commands:
+
+```bash
+# Step 1 — Download the latest changes
+git pull
+
+# Step 2 — Rebuild and restart the container
+docker compose up -d --build
+```
+
+Docker rebuilds the image with the new code and restarts the container. Your database, TLS certificates, and files are stored in volumes that are completely untouched.
+
+---
+
+### How do I know when there's a new version?
+
+- **Watch the GitHub repository** — click **Watch → Custom → Releases** at https://github.com/Shaf2665/FlashSpeed to get an email notification when a new version is released
+- **Check manually** — run `git fetch && git log HEAD..origin/main --oneline` inside your FlashSpeed folder to see if there are any new changes waiting
+
+---
+
 ## Troubleshooting
 
 | Problem | Solution |
