@@ -255,6 +255,151 @@ sudo systemctl restart flashyspeed
 
 ---
 
+## 🐳 Running with Docker (easiest for servers)
+
+Docker lets you run FlashySpeed in an isolated container with a single command — no need to install Go or Node.js on your server. This is the recommended method for always-on home servers and NAS devices.
+
+### Prerequisites
+
+Install **Docker Desktop** (includes both Docker and Docker Compose):
+- **Windows / Mac:** https://www.docker.com/products/docker-desktop/
+- **Linux:** https://docs.docker.com/engine/install/ (then also run `sudo apt install docker-compose-plugin`)
+
+To check it's installed, open a terminal and run:
+```
+docker --version
+```
+
+---
+
+### Quick start (4 steps)
+
+#### Step 1 — Download FlashySpeed
+
+```bash
+git clone https://github.com/Shaf2665/FlashSpeed.git
+cd FlashSpeed
+```
+
+#### Step 2 — Create your secret key
+
+FlashySpeed needs a secret string to secure your login sessions. Create a file called `.env` inside the FlashSpeed folder with this one line:
+
+```
+FS_JWT_SECRET=replace-this-with-any-random-string-at-least-32-characters-long
+```
+
+> 💡 **How to make a good secret:**
+> - **Linux/Mac:** Run `openssl rand -hex 32` in a terminal and paste the result
+> - **Windows PowerShell:** Run `-join ((1..40) | ForEach-Object { [char](Get-Random -Min 65 -Max 90) })` and paste the result
+> - **Or just type something random**, as long as it's 32+ characters (e.g. `my-home-flashyspeed-secret-2024-random-abc`)
+
+> ⚠️ Keep your `.env` file private. It is already in `.gitignore` so it won't be accidentally uploaded to Git.
+
+#### Step 3 — Create a folder for your files
+
+```bash
+mkdir files
+```
+
+This `files` folder on your computer is where FlashySpeed will read and serve your files from. You can put anything you like in here.
+
+#### Step 4 — Start FlashySpeed
+
+```bash
+docker compose up -d
+```
+
+Docker will build FlashySpeed (this takes 2–5 minutes the first time — it's downloading and compiling everything). Once done, open your browser and go to:
+
+**https://localhost:8080**
+
+You'll see a warning that says **"Your connection is not private"** — this is normal. FlashySpeed uses a self-signed certificate because it runs locally without a public domain name. Click **Advanced** then **Proceed to localhost** to continue.
+
+Log in with:
+- **Username:** `admin`
+- **Password:** `admin`
+
+> ⚠️ Change this password right away! Go to **⚙ Admin → Users**, click **Edit** next to the admin account, and set a new password.
+
+---
+
+### Viewing logs
+
+```bash
+docker compose logs -f
+```
+
+Press `Ctrl+C` to stop. You should see a line like:
+```
+FlashySpeed listening on https://localhost:8080
+```
+
+---
+
+### Adding more file folders
+
+Open `config.docker.yaml` and add more paths under `manual_paths`:
+
+```yaml
+storage:
+  auto_detect_drives: false
+  manual_paths:
+    - /files
+    - /photos
+    - /videos
+```
+
+Then open `docker-compose.yml` and add matching lines under `volumes:` so Docker knows which folders on your computer to map:
+
+```yaml
+    volumes:
+      - flashyspeed_data:/data
+      - ./files:/files
+      - /path/to/your/photos:/photos
+      - /path/to/your/videos:/videos
+```
+
+After editing either file, restart FlashySpeed:
+
+```bash
+docker compose restart
+```
+
+---
+
+### Updating to a new version
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+Your data (database, TLS certificates, uploaded files) is stored separately and is never touched by an update.
+
+---
+
+### Stopping FlashySpeed
+
+```bash
+docker compose down
+```
+
+This stops the container but keeps all your data safe. Run `docker compose up -d` to start it again.
+
+---
+
+### Where your data lives
+
+| What | Where |
+|------|-------|
+| Database, TLS certificates | Docker named volume `flashyspeed_data` (managed by Docker) |
+| Your files | The `./files` folder next to `docker-compose.yml` |
+
+To back up your files, just copy the `./files` folder. To back up the database, use `docker run --rm -v flashyspeed_data:/data alpine tar czf - /data > backup.tar.gz`.
+
+---
+
 ## Accessing from other devices on your network
 
 Once FlashySpeed is running, other devices on the same Wi-Fi or network can access it too.

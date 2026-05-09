@@ -1,0 +1,22 @@
+server:
+  port: 8080
+  data_dir: /data        # mapped to the flashyspeed_data Docker volume
+
+tls:
+  # self-signed generates a certificate automatically on first start.
+  # Your browser will warn about this — click Advanced → Proceed to continue.
+  # See the README for details on how to use a trusted certificate.
+  mode: self-signed
+
+storage:
+  # Must be false in Docker — the container cannot read /proc/mounts to
+  # auto-discover host drives. Add your folders as manual_paths instead.
+  auto_detect_drives: false
+  manual_paths:
+    - /files             # mapped to ./files on your computer (see docker-compose.yml)
+    # Add more folders here and add matching volume mounts in docker-compose.yml:
+    # - /photos
+    # - /videos
+
+admin:
+  create_default_admin: true   # creates admin / admin on first run

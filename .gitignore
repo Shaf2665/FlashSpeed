@@ -9,3 +9,10 @@ web/node_modules
 .superpowers/
 graphify-out/
 .graphify_python
+db.test.exe
+flashyspeed.exe
+server.log
+test.yaml
+.env
+files/
+tmp/

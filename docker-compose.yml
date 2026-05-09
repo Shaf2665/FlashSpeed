@@ -1,0 +1,21 @@
+services:
+  flashyspeed:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # FS_JWT_SECRET is read from the .env file in this directory.
+      # Create a .env file with one line:  FS_JWT_SECRET=your-random-string-here
+      # The :? makes docker compose fail immediately with a clear error if it's missing.
+      FS_JWT_SECRET: "${FS_JWT_SECRET:?Please create a .env file with FS_JWT_SECRET set to a random string of 32+ characters}"
+    volumes:
+      # Named volume: stores the database, TLS certificates, and upload temp files.
+      # Managed by Docker — persists across container restarts and rebuilds.
+      - flashyspeed_data:/data
+      # Bind mount: the ./files folder on your computer appears at /files inside the container.
+      # Put files here and they will show up in FlashySpeed immediately.
+      - ./files:/files
+
+volumes:
+  flashyspeed_data:
