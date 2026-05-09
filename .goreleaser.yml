@@ -1,0 +1,47 @@
+version: 2
+
+before:
+  hooks:
+    - sh -c "cd web && npm ci && npm run build"
+
+builds:
+  - id: flashyspeed
+    main: ./cmd/flashyspeed
+    binary: flashyspeed
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: flashyspeed
+    name_template: "flashyspeed_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - flashyspeed.example.yaml
+      - flashyspeed.service
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: flashyspeed
+    name: flashyspeed
+  draft: false
+  prerelease: auto
+  name_template: "FlashySpeed v{{.Version}}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
