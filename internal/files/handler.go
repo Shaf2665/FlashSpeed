@@ -3,12 +3,12 @@ package files
 import (
 	"archive/zip"
 	"encoding/json"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -230,7 +230,8 @@ func (h *Handler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ZipDownload handles POST /api/files/zip with body {"ids": [1, 2, 3]}
-// Streams a ZIP archive of the requested files (non-directories, ownership verified).
+// Streams a ZIP archive of the requested files. Directories are expanded
+// recursively — all descendant files are included with their relative paths.
 func (h *Handler) ZipDownload(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r)
 	var body struct {
@@ -247,32 +248,68 @@ func (h *Handler) ZipDownload(w http.ResponseWriter, r *http.Request) {
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	for _, id := range body.IDs {
-		var ownerID int64
-		var name string
-		var isDir int
-		if err := h.db.QueryRow(
-			`SELECT user_id, name, is_dir FROM files WHERE id=? AND deleted_at IS NULL`, id,
-		).Scan(&ownerID, &name, &isDir); err != nil || ownerID != claims.UserID || isDir == 1 {
-			continue // skip not-found, not-owned, or directories
-		}
-
-		absPath, err := h.svc.AbsPath(id)
+	// addFile writes a single non-directory file into the zip at zipPath.
+	addFile := func(fileID int64, zipPath string) {
+		absPath, err := h.svc.AbsPath(fileID)
 		if err != nil {
-			continue
+			return
 		}
-
 		f, err := os.Open(absPath)
 		if err != nil {
+			return
+		}
+		defer f.Close()
+		fw, err := zw.Create(zipPath)
+		if err != nil {
+			return
+		}
+		io.Copy(fw, f)
+	}
+
+	for _, id := range body.IDs {
+		var ownerID int64
+		var relPath string
+		var isDir int
+		var driveID int64
+		if err := h.db.QueryRow(
+			`SELECT user_id, rel_path, is_dir, drive_id FROM files WHERE id=? AND deleted_at IS NULL`, id,
+		).Scan(&ownerID, &relPath, &isDir, &driveID); err != nil || ownerID != claims.UserID {
 			continue
 		}
 
-		fw, err := zw.Create(fmt.Sprintf("%d_%s", id, name))
-		if err != nil {
-			f.Close()
+		if isDir == 0 {
+			// Plain file — add directly using just the filename.
+			var name string
+			h.db.QueryRow(`SELECT name FROM files WHERE id=?`, id).Scan(&name)
+			addFile(id, name)
 			continue
 		}
-		io.Copy(fw, f)
-		f.Close()
+
+		// Directory — expand all descendant files recursively.
+		// The ZIP paths will be relative to the directory itself (dir/subdir/file).
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(relPath)
+		pattern := escaped + "/%"
+		rows, err := h.db.Query(
+			`SELECT id, rel_path FROM files
+			 WHERE user_id=? AND drive_id=? AND is_dir=0 AND deleted_at IS NULL
+			 AND rel_path LIKE ? ESCAPE '\'`,
+			claims.UserID, driveID, pattern,
+		)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var childID int64
+			var childRel string
+			if err := rows.Scan(&childID, &childRel); err != nil {
+				continue
+			}
+			// Make the zip path relative to the directory's parent so the
+			// directory name itself appears as the top-level entry.
+			parentPrefix := relPath[:strings.LastIndex(relPath, "/")+1]
+			zipPath := strings.TrimPrefix(childRel, parentPrefix)
+			addFile(childID, zipPath)
+		}
+		rows.Close()
 	}
 }

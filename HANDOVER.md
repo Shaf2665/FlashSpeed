@@ -1,6 +1,6 @@
 # FlashySpeed — Project Handover
 
-*Generated: 2026-05-03 — covers all work through commit `aeb8788`*
+*Updated: 2026-05-09 — covers all work through commit `5e63788` (Phase 3 complete)*
 
 ---
 
@@ -31,7 +31,7 @@ All 14 Phase 1 tasks implemented, reviewed (spec + quality), and committed.
 
 ---
 
-## Phase 2 — 🔄 In Progress
+## Phase 2 — ✅ 100% Complete
 
 ### ✅ P2-1: Shares API — COMPLETE (commit `c7a267b` → `58c8684`)
 
@@ -92,46 +92,15 @@ HEAD /api/files/{id}/stream   (auth required)
 
 ---
 
-### ⚠️ P2-4: Frontend Phase 2 — CODE WRITTEN, NOT COMMITTED
+### ✅ P2-4: Frontend Phase 2 — COMPLETE (commit `1996bb2`)
 
-**Status:** The P2-4 implementer wrote all code but hit a rate limit before committing. The changes exist as **uncommitted modifications** on disk.
+**Files:** `web/src/routes/Files.svelte`, `web/src/lib/api.js`
 
-**Modified files (not yet committed):**
-- `web/src/routes/Files.svelte` — ~140 lines added
-- `web/src/lib/api.js` — 3 methods added
-
-**What was written:**
-
-`web/src/lib/api.js` additions:
-```js
-createShare: (fileId) => request('POST', '/shares', { file_id: fileId }),
-listShares:  ()       => request('GET', '/shares'),
-deleteShare: (id)     => request('DELETE', `/shares/${id}`),
-```
-
-`web/src/routes/Files.svelte` additions:
-- **Share dialog state:** `shareEntry`, `shareUrl`, `shareError`, `shareLoading`, `shareCopied`
-- **Share functions:** `openShareDialog(entry)`, `closeShareDialog()`, `handleShareBackdropClick()`, `createShare()`, `copyShareUrl()`
-- **Preview state:** `previewEntry`, `previewBlobUrl`
-- **Preview functions:** `openPreview(entry)`, `closePreview()`, `handlePreviewBackdropClick()`, `isPreviewable(entry)`, `revokePreviewBlob()`
-- **`onDestroy`** hook to revoke blob URLs on component unmount
-- **Share button** (🔗) on each non-directory file row
-- **Preview button** (▶) on previewable files (image/*, video/*, audio/*)
-- **Trash nav button** (🗑 Trash) in nav bar → navigates to `/trash`
-- **Share modal:** creates share, shows URL, copy-to-clipboard
-- **Preview modal:** `<img>` for images, `<video controls>` for video, `<audio controls>` for audio — all via Blob URLs fetched with auth header
-- CSS for both modals (dark theme, fixed overlay, centered card)
-
-**Next action required:** Run `cd web && npm run build`, then run spec + quality review on the uncommitted changes and commit.
-
-**Review checklist for P2-4:**
-- [ ] `npm run build` passes clean
-- [ ] Share dialog: clicking 🔗 calls `api.createShare(id)`, shows URL, copy works
-- [ ] Preview: `isPreviewable` checks mime starts with `image/`, `video/`, `audio/`
-- [ ] Blob URLs fetched with `Authorization: Bearer` header
-- [ ] `URL.revokeObjectURL` called on modal close AND `onDestroy`
-- [ ] Trash button navigates to `/trash`
-- [ ] No regressions to upload, folder creation, download, delete
+- Share dialog: 🔗 Share button per file → creates public link → copy-to-clipboard
+- Media preview modal: ▶ Preview on image/video/audio → fetches with auth header → Blob URL → `<img>` / `<video>` / `<audio>`
+- `URL.revokeObjectURL` called on close and `onDestroy`
+- Trash nav button in nav bar → `/trash`
+- `api.js` additions: `createShare`, `listShares`, `deleteShare`
 
 ---
 
@@ -162,16 +131,20 @@ Trash list, restore, permanent delete, and empty-trash (authenticated):
 
 ---
 
-## Phase 3 — Full Plan
+## Phase 3 — ✅ 100% Complete
 
-### P3-1: Tailscale Integration (`internal/admin/tailscale.go`)
+All 7 Phase 3 tasks implemented and pushed to `main` on GitHub (`https://github.com/Shaf2665/FlashSpeed`).
 
-Detect/install/configure Tailscale from the admin panel:
-- `Status() (TailscaleStatus, error)` — check if `tailscaled` is running, get Tailscale IP
-- `Install() error` — run `curl -fsSL https://tailscale.com/install.sh | sh`
-- `Up(authKey string) error` — run `tailscale up --authkey=<key>`
+### ✅ P3-1: Tailscale Integration — COMPLETE (commit `0d91274`)
 
-Routes (admin-only, check `claims.Role == "admin"`):
+**Files:** `internal/admin/tailscale.go` (new), `internal/admin/handler.go` (new)
+
+Admin-only endpoints to manage Tailscale from the web UI:
+- `TailscaleStatusCheck()` — runs `tailscale status --json`; returns `{Running: false}` gracefully if not installed
+- `TailscaleInstall()` — runs `curl -fsSL https://tailscale.com/install.sh | sh`
+- `TailscaleUp(authKey)` — runs `tailscale up --authkey=<key>`
+
+Routes (admin-only):
 ```
 GET  /api/admin/tailscale/status
 POST /api/admin/tailscale/install
@@ -190,36 +163,59 @@ PATCH  /api/admin/users/{id}
 DELETE /api/admin/users/{id}
 ```
 
-Quota enforcement: in `files/service.go` before writing a file, check `SUM(size_bytes) + new_size <= quota_bytes` (0 = unlimited).
+Quota enforcement added to `internal/tus/handler.go` `finalize()`: checks `SUM(size_bytes) + upload_size <= quota_bytes` (0 = unlimited) before moving file into place.
 
-### P3-3: Storage Dashboard
+Routes added:
+```
+GET    /api/admin/users
+POST   /api/admin/users
+PATCH  /api/admin/users/{id}
+DELETE /api/admin/users/{id}
+```
 
-`GET /api/admin/storage` — per-drive usage stats (total files, total bytes, per-user breakdown).
-Frontend: bar charts showing drive usage and per-user quota utilization.
+### ✅ P3-3: Storage Dashboard — COMPLETE (commit `7be95a2`)
 
-### P3-4: Bulk Operations
+**File:** `internal/admin/handler.go` — `StorageDashboard` handler
 
-Multi-select files in `Files.svelte` (checkbox column), bulk delete, zip download.
-New backend: `POST /api/files/zip` — streams a ZIP archive of selected file IDs.
+`GET /api/admin/storage` returns:
+```json
+{
+  "drives": [{"drive_id":1,"drive_name":"...","total_files":42,"total_bytes":102400}],
+  "users":  [{"user_id":1,"username":"alice","quota_bytes":0,"used_bytes":51200}]
+}
+```
+Frontend (`Admin.svelte`): drive table + per-user quota progress bars with colour coding (blue → amber at 75% → red at 90%).
 
-### P3-5: Search
+### ✅ P3-4: Bulk Operations — COMPLETE (commit `7be95a2`)
 
-`GET /api/files/search?q=<term>` — filename `LIKE` search within user's files.
-Frontend: search bar in nav, results list.
+**File:** `internal/files/handler.go` — `BulkDelete`, `ZipDownload`
 
-### P3-6: Frontend Phase 3
+- `DELETE /api/files` body `{"ids":[1,2,3]}` — soft-deletes selected files, returns 207 with `failed_ids` if any fail
+- `POST /api/files/zip` body `{"ids":[1,2,3]}` — streams a ZIP archive; skips directories and non-owned files
+- Frontend: checkbox column in file table; bulk action bar appears when ≥1 file is selected
 
-- `web/src/routes/Admin.svelte` — user CRUD table, quota progress bars, drive usage
-- Tailscale wizard: status card, Install button, auth key input, Up button
-- Bulk selection UI in `Files.svelte` — checkbox per row, bulk action toolbar
-- Search bar in nav + results component
+### ✅ P3-5: Search — COMPLETE (commit `7be95a2`)
 
-### P3-7: GitHub Open Source Setup
+**Files:** `internal/files/service.go` — `Search()`, `internal/files/handler.go` — `Search` handler
 
-- `LICENSE` (MIT)
-- `CONTRIBUTING.md`
-- `.github/workflows/ci.yml` — `go test ./...` + `go build ./...` on every PR
-- `goreleaser.yml` — pre-built binaries for `linux/amd64` and `linux/arm64`
+`GET /api/files/search?q=<term>` — case-insensitive LIKE search across all user's live files (LIMIT 200). LIKE wildcards escaped. Frontend: search bar at top of Files page; shows inline result count; **Clear** button returns to normal directory listing.
+
+### ✅ P3-6: Frontend Phase 3 — COMPLETE (commit `1af1a19`)
+
+**New file:** `web/src/routes/Admin.svelte`
+
+- **Tailscale wizard** — status dot (green/grey), Install button, auth key input + Connect
+- **Storage dashboard** — drive table + animated per-user quota bars
+- **User CRUD** — create user form; per-row Edit modal (role, quota, password); delete with confirmation
+- **Files.svelte additions** — search bar (Enter or button), checkbox column for bulk selection, bulk action bar (Delete / ZIP), inline rename (✏ button + input), breadcrumb path bar
+- **App.svelte** — `/admin` route added; `Admin` component imported
+
+### ✅ P3-7: GitHub OSS Setup — COMPLETE (commit `5e63788`)
+
+- `LICENSE` — MIT
+- `CONTRIBUTING.md` — build-from-source guide, package tour, PR process
+- `.github/workflows/ci.yml` — Node + Go matrix; runs `npm ci`, `npm run build`, `go test ./...`, `go build`, `go vet`
+- `.goreleaser.yml` — `linux/amd64` + `linux/arm64` tarballs, sha256 checksums, draft GitHub Release
 
 ---
 

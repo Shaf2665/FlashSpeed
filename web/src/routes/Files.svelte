@@ -20,6 +20,15 @@
   let selected = new Set()   // Set of entry IDs
   let bulkLoading = false
 
+  // --- Rename state ---
+  let renameEntry = null   // entry being renamed
+  let renameName = ''
+  let renameLoading = false
+
+  // --- Breadcrumb state ---
+  // Each element: { id: number|0, name: string }
+  let breadcrumbs = [{ id: 0, name: '/' }]
+
   // --- Share dialog state ---
   let shareEntry = null   // entry being shared
   let shareUrl = ''       // generated share URL after create
@@ -125,6 +134,45 @@
   function clearSearch() {
     searchQuery = ''
     searchResults = null
+  }
+
+  // ---- Rename ----
+
+  function startRename(entry) {
+    renameEntry = entry
+    renameName = entry.name
+  }
+
+  async function commitRename() {
+    if (!renameEntry || !renameName.trim() || renameName === renameEntry.name) {
+      renameEntry = null; return
+    }
+    renameLoading = true
+    try {
+      await api.renameFile(renameEntry.id, renameName.trim())
+      renameEntry = null
+      await loadFiles()
+    } catch (e) { error = e.message; renameEntry = null }
+    renameLoading = false
+  }
+
+  function cancelRename() { renameEntry = null }
+
+  // ---- Breadcrumbs ----
+
+  function navigateFolder(entry) {
+    breadcrumbs = [...breadcrumbs, { id: entry.id, name: entry.name }]
+    currentParentId.set(entry.id)
+    loadFiles()
+    clearSearch()
+  }
+
+  function navigateBreadcrumb(index) {
+    const crumb = breadcrumbs[index]
+    breadcrumbs = breadcrumbs.slice(0, index + 1)
+    currentParentId.set(crumb.id)
+    loadFiles()
+    clearSearch()
   }
 
   // ---- Bulk selection ----
@@ -310,6 +358,15 @@
   .bulk-bar { padding: 6px 20px; display: flex; gap: 8px; align-items: center;
               background: #1e293b; border-bottom: 1px solid #334155; font-size: 12px; color: #94a3b8; }
   input[type="checkbox"] { accent-color: #38bdf8; cursor: pointer; }
+  .rename-input { background: #0f172a; border: 1px solid #38bdf8; color: #e2e8f0;
+                  padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 12px;
+                  width: 180px; }
+  .breadcrumbs { padding: 6px 20px; display: flex; align-items: center; gap: 4px;
+                 font-size: 12px; color: #64748b; border-bottom: 1px solid #1e293b;
+                 flex-wrap: wrap; }
+  .breadcrumbs .crumb { cursor: pointer; color: #38bdf8; }
+  .breadcrumbs .crumb:hover { text-decoration: underline; }
+  .breadcrumbs .sep { color: #334155; }
 
   /* Modal shared styles */
   .modal-backdrop {
@@ -366,6 +423,24 @@
     <button on:click={clearSearch}>✕ Clear</button>
   {/if}
 </div>
+
+<!-- Breadcrumb trail -->
+{#if searchResults === null}
+  <div class="breadcrumbs">
+    {#each breadcrumbs as crumb, i}
+      {#if i > 0}<span class="sep">›</span>{/if}
+      {#if i < breadcrumbs.length - 1}
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <span class="crumb" on:click={() => navigateBreadcrumb(i)}>
+          {crumb.id === 0 ? '🏠 Home' : '📁 ' + crumb.name}
+        </span>
+      {:else}
+        <span style="color:#e2e8f0">{crumb.id === 0 ? '🏠 Home' : '📁 ' + crumb.name}</span>
+      {/if}
+    {/each}
+  </div>
+{/if}
 
 <div class="toolbar">
   {#if searchResults === null}
@@ -430,12 +505,20 @@
           <td>
             {#if e.is_dir}
               <span class="icon">📁</span>
-              <span style="cursor:pointer;color:#38bdf8"
-                    on:click={() => { currentParentId.set(e.id); loadFiles(); clearSearch() }}>
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <span style="cursor:pointer;color:#38bdf8" on:click={() => navigateFolder(e)}>
                 {e.name}
               </span>
             {:else}
-              <span class="icon">📄</span>{e.name}
+              <span class="icon">📄</span>
+              {#if renameEntry && renameEntry.id === e.id}
+                <input class="rename-input" bind:value={renameName}
+                       on:keydown={ev => ev.key === 'Enter' && commitRename()}
+                       on:blur={cancelRename} />
+              {:else}
+                {e.name}
+              {/if}
             {/if}
           </td>
           <td style="color:#64748b">{e.is_dir ? '—' : formatBytes(e.size_bytes)}</td>
@@ -450,6 +533,12 @@
                   <button on:click={() => openPreview(e)}>▶ Preview</button>
                 {/if}
                 <button on:click={() => openShareDialog(e)}>🔗 Share</button>
+                {#if renameEntry && renameEntry.id === e.id}
+                  <button on:click={commitRename} disabled={renameLoading}>✓</button>
+                  <button on:click={cancelRename}>✕</button>
+                {:else}
+                  <button on:click={() => startRename(e)}>✏</button>
+                {/if}
               {/if}
               <button on:click={() => deleteEntry(e.id)}>🗑</button>
             </div>
