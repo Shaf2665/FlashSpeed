@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/flashyspeed/flashyspeed/internal/admin"
 	"github.com/flashyspeed/flashyspeed/internal/auth"
 	"github.com/flashyspeed/flashyspeed/internal/config"
 	"github.com/flashyspeed/flashyspeed/internal/db"
@@ -81,6 +82,7 @@ func main() {
 	tusHandler := tus.NewHandler(database, cfg.Server.DataDir+"/tus-tmp")
 	shareHandler := shares.NewHandler(database, jwtSecret)
 	mediaHandler := media.NewHandler(database, fileSvc)
+	adminHandler := admin.NewHandler()
 
 	authMW := auth.Middleware(jwtSecret)
 
@@ -114,6 +116,10 @@ func main() {
 
 		r.Get("/api/drives", driveHandler.List)
 		r.Post("/api/drives/scan", driveHandler.TriggerScan)
+
+		r.Get("/api/admin/tailscale/status", adminHandler.TailscaleStatus)
+		r.Post("/api/admin/tailscale/install", adminHandler.TailscaleInstall)
+		r.Post("/api/admin/tailscale/up", adminHandler.TailscaleUp)
 
 		r.Get("/api/shares", shareHandler.List)
 		r.Post("/api/shares", shareHandler.Create)
